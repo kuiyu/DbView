@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+    <ItemGroup>
+     <PackageReference Include="FastEndpoints.Security" Version="7.2.0" />
+    <PackageReference Include="FastEndpoints.Swagger" Version="7.2.0" />
+  </ItemGroup>
+    <ItemGroup>
+    <ProjectReference Include="..\DbView.Application\DbView.Application.csproj" />
+    <ProjectReference Include="..\DbView.Infrastructure\DbView.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
+
