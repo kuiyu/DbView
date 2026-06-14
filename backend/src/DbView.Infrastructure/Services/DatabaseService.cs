@@ -68,8 +68,13 @@ namespace DbView.Infrastructure.Services
             countCommand.CommandText = $"SELECT COUNT(*) FROM {quotedTableName}";
             var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
             
+            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, cancellationToken);
+            var orderByClause = primaryKeys.Count > 0 
+                ? $"ORDER BY {string.Join(", ", primaryKeys.Select(k => GetQuotedColumnName(connection.DbType, k)))}" 
+                : string.Empty;
+            
             var command = conn.CreateCommand();
-            command.CommandText = $"SELECT * FROM {quotedTableName} order by id LIMIT {pageSize} OFFSET {(page - 1) * pageSize}";
+            command.CommandText = $"SELECT * FROM {quotedTableName} {orderByClause} LIMIT {pageSize} OFFSET {(page - 1) * pageSize}";
             
             var items = new List<object[]>();
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -89,6 +94,69 @@ namespace DbView.Infrastructure.Services
                 Total = total,
                 Page = page,
                 PageSize = pageSize
+            };
+        }
+
+        private async Task<List<string>> GetPrimaryKeyColumnsAsync(DbConnection conn, string dbType, string tableName, CancellationToken cancellationToken)
+        {
+            var primaryKeys = new List<string>();
+            
+            var command = conn.CreateCommand();
+            command.CommandText = GetPrimaryKeysQuery(dbType, tableName);
+            
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                primaryKeys.Add(reader.GetString(0));
+            }
+            
+            return primaryKeys;
+        }
+
+        private string GetQuotedColumnName(string dbType, string columnName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{columnName}\"",
+                "mysql" => $"`{columnName}`",
+                "sqlite" => $"\"{columnName}\"",
+                "sqlserver" => $"[{columnName}]",
+                _ => columnName
+            };
+        }
+
+        private string GetPrimaryKeysQuery(string dbType, string tableName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $@"
+                    SELECT ku.column_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage ku
+                        ON tc.constraint_name = ku.constraint_name
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                    AND tc.table_name = '{tableName}'
+                    ORDER BY ku.ordinal_position",
+                "mysql" => $@"
+                    SELECT COLUMN_NAME
+                    FROM information_schema.KEY_COLUMN_USAGE
+                    WHERE TABLE_NAME = '{tableName}'
+                    AND CONSTRAINT_NAME = 'PRIMARY'
+                    ORDER BY ORDINAL_POSITION",
+                "sqlite" => $@"
+                    SELECT name
+                    FROM pragma_table_info('{tableName}')
+                    WHERE pk = 1
+                    ORDER BY cid",
+                "sqlserver" => $@"
+                    SELECT ku.COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+                        ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+                    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    AND tc.TABLE_NAME = '{tableName}'
+                    ORDER BY ku.ORDINAL_POSITION",
+                _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
 
