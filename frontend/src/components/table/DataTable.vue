@@ -49,6 +49,7 @@
 
     <EditDialog ref="editDialog" @save="onEditSave" />
     <ImportDialog ref="importDialog" @import="onImportSave" />
+    <ConfirmDialog ref="confirmDialog" />
   </div>
 </template>
 
@@ -59,6 +60,7 @@ import { tableApi } from '../../api/table'
 import { structureApi } from '../../api/structure'
 import EditDialog from './EditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
+import ConfirmDialog from '../common/ConfirmDialog.vue'
 
 const props = defineProps<{
   connectionId: number,
@@ -72,11 +74,13 @@ const emit = defineEmits<{
 const rawData = ref<any[]>([])
 const columnNames = ref<string[]>([])
 const columnTypes = ref<Record<string, string>>({})
+const primaryKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = ref<number[]>([])
 const selectedRows = ref<any[]>([])
 const pagination = ref({ current: 1, pageSize: 20, total: 0 })
 const editDialog = ref<InstanceType<typeof EditDialog>>()
 const importDialog = ref<InstanceType<typeof ImportDialog>>()
+const confirmDialog = ref<InstanceType<typeof ConfirmDialog>>()
 
 const dateTypeKeywords = ['date', 'time', 'timestamp', 'datetime']
 const booleanTypeKeywords = ['bool', 'boolean']
@@ -138,7 +142,7 @@ const tableColumns = computed(() => {
 const formatCellValue = (value: any): string => {
 	
   if (value === null || value === undefined) {
-    return 'NULL'
+    return ''
   }
   if (typeof value === 'object') {
     try {
@@ -182,24 +186,28 @@ const loadData = async () => {
 const loadColumnInfo = async () => {
   try {
     const result: any = await structureApi.getColumns(props.connectionId, props.tableName)
-    // 兼容后端GlobalResponseProcessor包装的响应格式 {success, code, msg, result: [...]}
-    // 以及未包装的原始响应格式 [{columnName: ..., dataType: ...}, ...]
     const structure = Array.isArray(result) ? result : (result.result || [])
 
     if (structure && structure.length > 0) {
       columnNames.value = structure.map((col: any) => col.columnName || col.name || col)
       columnTypes.value = {}
+      primaryKeys.value = new Set()
       structure.forEach((col: any) => {
         const name = col.columnName || col.name || col
         columnTypes.value[name] = col.dataType || col.type || ''
+        if (col.isPrimaryKey || col.is_pk || col.primaryKey) {
+          primaryKeys.value.add(name)
+        }
       })
-    } else if (rawData.value.length > 0) {
+    } else if (rawData.value.length > 0 && Array.isArray(rawData.value[0])) {
       columnNames.value = rawData.value[0].map((_: any, idx: number) => `column_${idx + 1}`)
+      primaryKeys.value = new Set([columnNames.value[0]])
     }
   } catch (error) {
     console.error('加载表结构失败:', error)
-    if (rawData.value.length > 0) {
+    if (rawData.value.length > 0 && Array.isArray(rawData.value[0])) {
       columnNames.value = rawData.value[0].map((_: any, idx: number) => `column_${idx + 1}`)
+      primaryKeys.value = new Set([columnNames.value[0]])
     }
   }
 }
@@ -208,7 +216,8 @@ const getColumnDefs = () => {
   return columnNames.value.map(col => ({
     colKey: col,
     title: col,
-    dataType: columnTypes.value[col] || ''
+    dataType: columnTypes.value[col] || '',
+    isPrimaryKey: primaryKeys.value.has(col)
   }))
 }
 
@@ -231,6 +240,12 @@ const onDelete = async (row: any) => {
       MessagePlugin.error('无法获取主键值')
       return
     }
+    const confirmResult = await confirmDialog.value?.open('确定要删除这条数据吗？此操作无法撤销。', '删除确认')
+
+    if (!confirmResult) {
+      return
+    }
+
     await tableApi.deleteTableData(props.connectionId, props.tableName, primaryKey)
     MessagePlugin.success('删除成功')
     loadData()
@@ -251,6 +266,15 @@ const onBatchDelete = async () => {
       MessagePlugin.error('无法获取主键值')
       return
     }
+    const confirmResult = await confirmDialog.value?.open(
+      `确定要删除选中的 ${selectedRowKeys.value.length} 条数据吗？此操作无法撤销。`,
+      '批量删除确认'
+    )
+
+    if (!confirmResult) {
+      return
+    }
+
     await tableApi.batchDelete(props.connectionId, props.tableName, primaryKeys)
     selectedRowKeys.value = []
     selectedRows.value = []
@@ -277,9 +301,10 @@ const onSelectAllChange = (selected: boolean, options: any[]) => {
   }
 }
 
-const onPageChange = (page: number, pageSize: number) => {
-  pagination.value.current = page
-  pagination.value.pageSize = pageSize
+const onPageChange = (pageInfo: { current: number; previous: number | undefined; pageSize: number }) => {
+  console.log('onPageChange:', pageInfo)
+  pagination.value.current = pageInfo.current
+  pagination.value.pageSize = pageInfo.pageSize
   selectedRowKeys.value = []
   selectedRows.value = []
   loadData()
@@ -318,13 +343,21 @@ const onRefresh = () => {
   emit('refresh')
 }
 
-const onEditSave = async (formData: Record<string, any>) => {
+const onEditSave = async (formData: Record<string, any>, isEdit: boolean) => {
   try {
-    await tableApi.insertData(props.connectionId, props.tableName, formData)
-    MessagePlugin.success('保存成功')
+    if (isEdit) {
+      const pkName = columnNames.value[0]
+      const pkValue = formData[pkName]
+      const updateData = { ...formData }
+      delete updateData[pkName]
+      await tableApi.updateData(props.connectionId, props.tableName, updateData, { [pkName]: pkValue })
+    } else {
+      await tableApi.insertData(props.connectionId, props.tableName, formData)
+    }
+    MessagePlugin.success(isEdit ? '更新成功' : '新增成功')
     loadData()
   } catch (error) {
-    MessagePlugin.error('保存失败')
+    MessagePlugin.error(isEdit ? '更新失败' : '新增失败')
     console.error(error)
   }
 }

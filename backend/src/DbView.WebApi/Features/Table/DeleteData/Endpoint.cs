@@ -19,7 +19,7 @@ namespace DbView.WebApi.Features.Table.DeleteData
 
         public override void Configure()
         {
-            Delete("/connections/{ConnectionId}/tables/{TableName}/data");
+            Delete("/connections/{ConnectionId}/tables/{TableName}/data/{Id?}");
             AllowAnonymous();
         }
 
@@ -32,7 +32,8 @@ namespace DbView.WebApi.Features.Table.DeleteData
                 return;
             }
 
-            var sql = GenerateDeleteSql(r.TableName, r.Where);
+            var quotedTableName = GetQuotedTableName(connection.DbType, r.TableName);
+            var sql = GenerateDeleteSql(quotedTableName, r.Where, r.Id);
             var result = await _databaseService.ExecuteSqlAsync(connection, sql, c);
 
             Response = new DeleteTableDataResponse
@@ -42,10 +43,39 @@ namespace DbView.WebApi.Features.Table.DeleteData
             };
         }
 
-        private string GenerateDeleteSql(string tableName, Dictionary<string, object> where)
+        private string GetQuotedTableName(string dbType, string tableName)
         {
-            var whereClauses = where.Select(kv => $"{kv.Key} = '{kv.Value}'");
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{tableName}\"",
+                "mysql" => $"`{tableName}`",
+                "sqlite" => $"\"{tableName}\"",
+                "sqlserver" => $"[{tableName}]",
+                _ => tableName
+            };
+        }
+
+        private string GenerateDeleteSql(string tableName, Dictionary<string, object> where, long? id)
+        {
+            if (id.HasValue)
+            {
+                return $"DELETE FROM {tableName} WHERE id = {id.Value}";
+            }
+            var whereClauses = where.Select(kv => $"{kv.Key} = {FormatValue(kv.Value)}");
             return $"DELETE FROM {tableName} WHERE {string.Join(" AND ", whereClauses)}";
+        }
+
+        private string FormatValue(object? value)
+        {
+            if (value == null)
+            {
+                return "NULL";
+            }
+            if (value is string str)
+            {
+                return $"'{str.Replace("'", "''")}'";
+            }
+            return value.ToString() ?? "NULL";
         }
     }
 }

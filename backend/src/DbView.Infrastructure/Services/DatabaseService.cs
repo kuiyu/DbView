@@ -69,7 +69,7 @@ namespace DbView.Infrastructure.Services
             var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
             
             var command = conn.CreateCommand();
-            command.CommandText = $"SELECT * FROM {quotedTableName} LIMIT {pageSize} OFFSET {(page - 1) * pageSize}";
+            command.CommandText = $"SELECT * FROM {quotedTableName} order by id LIMIT {pageSize} OFFSET {(page - 1) * pageSize}";
             
             var items = new List<object[]>();
             using var reader = await command.ExecuteReaderAsync(cancellationToken);

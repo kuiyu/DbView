@@ -31,6 +31,10 @@ export const tableApi = {
     return request.post(`/connections/${connectionId}/tables/${tableName}/data`, data)
   },
 
+  updateData(connectionId: number, tableName: string, data: any, where: any) {
+    return request.put(`/connections/${connectionId}/tables/${tableName}/data`, { data, where })
+  },
+
   importData(connectionId: number, tableName: string, file: File) {
     const formData = new FormData()
     formData.append('file', file)

@@ -32,7 +32,8 @@ namespace DbView.WebApi.Features.Table.UpdateData
                 return;
             }
 
-            var sql = GenerateUpdateSql(r.TableName, r.Data, r.Where);
+            var quotedTableName = GetQuotedTableName(connection.DbType, r.TableName);
+            var sql = GenerateUpdateSql(quotedTableName, r.Data, r.Where);
             var result = await _databaseService.ExecuteSqlAsync(connection, sql, c);
 
             Response = new UpdateTableDataResponse
@@ -42,11 +43,59 @@ namespace DbView.WebApi.Features.Table.UpdateData
             };
         }
 
+        private string GetQuotedTableName(string dbType, string tableName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{tableName}\"",
+                "mysql" => $"`{tableName}`",
+                "sqlite" => $"\"{tableName}\"",
+                "sqlserver" => $"[{tableName}]",
+                _ => tableName
+            };
+        }
+
         private string GenerateUpdateSql(string tableName, Dictionary<string, object> data, Dictionary<string, object> where)
         {
-            var setClauses = data.Select(kv => $"{kv.Key} = '{kv.Value}'");
-            var whereClauses = where.Select(kv => $"{kv.Key} = '{kv.Value}'");
+            var setClauses = data.Select(kv => $"{kv.Key} = {FormatValue(kv.Value)}");
+            var whereClauses = where.Select(kv => $"{kv.Key} = {FormatValue(kv.Value)}");
             return $"UPDATE {tableName} SET {string.Join(", ", setClauses)} WHERE {string.Join(" AND ", whereClauses)}";
+        }
+
+        private string FormatValue(object? value)
+        {
+            if (value == null)
+            {
+                return "NULL";
+            }
+            string strValue = value.ToString() ?? "";
+            if (strValue.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+            {
+                return "NULL";
+            }
+            if (IsNumeric(strValue))
+            {
+                return strValue;
+            }
+            if (IsBoolean(strValue))
+            {
+                return strValue.ToLower() == "true" ? "TRUE" : "FALSE";
+            }
+            return $"'{strValue.Replace("'", "''")}'";
+        }
+
+        private bool IsNumeric(string value)
+        {
+            return int.TryParse(value, out _) ||
+                   long.TryParse(value, out _) ||
+                   double.TryParse(value, out _) ||
+                   decimal.TryParse(value, out _);
+        }
+
+        private bool IsBoolean(string value)
+        {
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("false", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

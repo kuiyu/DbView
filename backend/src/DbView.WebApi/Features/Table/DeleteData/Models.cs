@@ -4,6 +4,7 @@ namespace DbView.WebApi.Features.Table.DeleteData
     {
         public long ConnectionId { get; set; }
         public string TableName { get; set; } = string.Empty;
+        public long? Id { get; set; }
         public Dictionary<string, object> Where { get; set; } = new();
     }
 

@@ -13,7 +13,14 @@
         :label="field.title || field.colKey"
         :name="field.colKey"
       >
-        <template v-if="isDateField(field)">
+        <template v-if="field.isPrimaryKey && isEdit">
+          <t-input
+            :model-value="formData[field.colKey]"
+            readonly
+            disabled
+          />
+        </template>
+        <template v-else-if="isDateField(field)">
           <t-date-picker
             v-model="formData[field.colKey]"
             :placeholder="`请选择${field.title || field.colKey}`"
@@ -44,13 +51,13 @@ import { ref, reactive } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 
 const emit = defineEmits<{
-  (e: 'save', data: Record<string, any>): void
+  (e: 'save', data: Record<string, any>, isEdit: boolean): void
 }>()
 
 const visible = ref(false)
 const isEdit = ref(false)
 const form = ref()
-const fields = ref<{ colKey: string; title?: string; dataType?: string }[]>([])
+const fields = ref<{ colKey: string; title?: string; dataType?: string; isPrimaryKey?: boolean }[]>([])
 
 const formData = reactive<Record<string, any>>({})
 
@@ -99,7 +106,7 @@ const onDateChange = (fieldName: string) => {
   formData[fieldName] = normalizeDateValue(formData[fieldName])
 }
 
-const open = (row?: any, columnDefs?: { colKey: string; title?: string; dataType?: string }[]) => {
+const open = (row?: any, columnDefs?: { colKey: string; title?: string; dataType?: string; isPrimaryKey?: boolean }[]) => {
   visible.value = true
   isEdit.value = !!row
   fields.value = columnDefs || []
@@ -118,7 +125,7 @@ const open = (row?: any, columnDefs?: { colKey: string; title?: string; dataType
     })
   } else if (columnDefs) {
     columnDefs.forEach((f) => {
-      formData[f.colKey] = ''
+      formData[f.colKey] = f.isPrimaryKey ? '' : ''
     })
   }
 }
@@ -134,8 +141,8 @@ const onConfirm = async () => {
       submitData[key] = value
     }
   })
-  emit('save', submitData)
-  MessagePlugin.success('保存成功')
+  emit('save', submitData, isEdit.value)
+  MessagePlugin.success(isEdit.value ? '更新成功' : '新增成功')
   visible.value = false
 }
 
