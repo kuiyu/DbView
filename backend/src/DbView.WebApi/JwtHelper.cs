@@ -1,22 +1,26 @@
 ﻿
 using FastEndpoints.Security;
+using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text;
 
 public class JwtHelper
 {
    public static string GenerateToken(List<Claim> claims, JwtSettings settings)
     {
-        var token=JwtBearer.CreateToken(x =>
-        {
-            x.SigningKey=settings.SecretKey;
-            x.Issuer=settings.Issuer;
-            x.Audience=settings.Audience;
-           
-            x.ExpireAt=DateTime.UtcNow.AddMinutes(settings.Expire);
-            x.User.Claims.AddRange(claims);
-        });
-        return token;
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(settings.SecretKey));
+        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: settings.Issuer,
+            audience: settings.Audience,
+            claims: claims,
+            expires: DateTime.Now.AddMinutes(settings.Expire),
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     public IEnumerable<Claim> GetClaims(string accessToken)

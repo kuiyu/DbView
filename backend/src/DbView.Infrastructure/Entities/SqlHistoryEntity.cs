@@ -2,7 +2,7 @@ using FreeSql.DataAnnotations;
 
 namespace DbView.Infrastructure.Entities
 {
-    [Table(Name = "sql_history")]
+    [Table(Name = "dbview_sql_history")]
     public class SqlHistoryEntity
     {
         [Column(IsIdentity = true, IsPrimary = true)]

@@ -50,7 +50,9 @@ const onSubmit = async ({ validateResult }: { validateResult: any }) => {
   loading.value = true
   try {
     const res: any = await userApi.login(formData.username, formData.password)
-    userStore.setToken(res.token || res.accessToken)
+	console.log('login res '+JSON.stringify(res))
+	let ret=res.result
+    userStore.setToken(ret.token || ret.accessToken)
     MessagePlugin.success('登录成功')
     router.push('/')
   } catch (err: any) {

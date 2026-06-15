@@ -335,5 +335,51 @@ namespace DbView.Infrastructure.Services
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
+
+        public async Task<List<string>> GetTableColumnNamesAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        {
+            var columns = new List<string>();
+
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var command = conn.CreateCommand();
+            command.CommandText = GetColumnsNameQuery(connection.DbType, tableName);
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(0));
+            }
+
+            return columns;
+        }
+
+        private string GetColumnsNameQuery(string dbType, string tableName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $@"
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = '{tableName}'
+            ORDER BY ordinal_position",
+                "mysql" => $@"
+            SELECT COLUMN_NAME 
+            FROM information_schema.COLUMNS 
+            WHERE TABLE_NAME = '{tableName}'
+            ORDER BY ORDINAL_POSITION",
+                "sqlite" => $@"
+            SELECT name 
+            FROM pragma_table_info('{tableName}')
+            ORDER BY cid",
+                "sqlserver" => $@"
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = '{tableName}'
+            ORDER BY ORDINAL_POSITION",
+                _ => throw new NotSupportedException($"Database type {dbType} is not supported")
+            };
+        }
     }
 }

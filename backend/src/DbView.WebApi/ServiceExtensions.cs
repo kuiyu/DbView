@@ -78,19 +78,19 @@ public static class ServiceExtensions
         var database =configuration.GetSection("Database").Value;
         if (database == "mysql")
         {
-            services.AddDatabase(configuration, FreeSql.DataType.MySql, true);
+            services.AddDatabase(configuration, FreeSql.DataType.MySql);
         }
         if (database == "sqlite")
         {
-            services.AddDatabase(configuration, FreeSql.DataType.Sqlite, true);
+            services.AddDatabase(configuration, FreeSql.DataType.Sqlite,true);
         }
         if (database == "sqlserver")
         {
-            services.AddDatabase(configuration, FreeSql.DataType.SqlServer, true);
+            services.AddDatabase(configuration, FreeSql.DataType.SqlServer);
         }
         if (database == "postgresql")
         {
-            services.AddDatabase(configuration, FreeSql.DataType.PostgreSQL, true);
+            services.AddDatabase(configuration, FreeSql.DataType.PostgreSQL);
         }
     }
     

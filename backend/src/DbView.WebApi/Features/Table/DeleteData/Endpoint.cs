@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Table.DeleteData
         public override void Configure()
         {
             Delete("/connections/{ConnectionId}/tables/{TableName}/data/{Id?}");
-            AllowAnonymous();
+          
         }
 
         public override async Task HandleAsync(DeleteTableDataRequest r, CancellationToken c)
@@ -32,8 +32,21 @@ namespace DbView.WebApi.Features.Table.DeleteData
                 return;
             }
 
-            var quotedTableName = GetQuotedTableName(connection.DbType, r.TableName);
-            var sql = GenerateDeleteSql(quotedTableName, r.Where, r.Id);
+            var columnNames = await _databaseService.GetTableColumnNamesAsync(connection, r.TableName, c);
+            Console.WriteLine($"Available columns: {string.Join(", ", columnNames)}");
+
+            // ²éÕÒÖ÷¼üÁÐ
+            var columns = await _databaseService.GetTableColumnsAsync(connection, r.TableName, c);
+            var pkColumn = columns.FirstOrDefault(col => col.IsPrimaryKey);
+            if (pkColumn == null)
+            {
+                await HttpContext.Response.SendAsync(ApiResponse.Fail($"Table {r.TableName} does not have a primary key"), 400, null, c);
+                return;
+            }
+            //var quotedTableName = GetQuotedTableName(connection.DbType, r.TableName);
+            //var sql = GenerateDeleteSql(quotedTableName, r.Where, r.Id);
+            var quotedPkColumn = GetQuotedColumnName(connection.DbType, pkColumn.ColumnName);
+            var sql = $"DELETE FROM {GetQuotedTableName(connection.DbType, r.TableName)} WHERE {quotedPkColumn} = {r.Id.Value}";
             var result = await _databaseService.ExecuteSqlAsync(connection, sql, c);
 
             Response = new DeleteTableDataResponse
@@ -54,7 +67,17 @@ namespace DbView.WebApi.Features.Table.DeleteData
                 _ => tableName
             };
         }
-
+        private string GetQuotedColumnName(string dbType, string columnName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{columnName}\"",
+                "mysql" => $"`{columnName}`",
+                "sqlite" => $"\"{columnName}\"",
+                "sqlserver" => $"[{columnName}]",
+                _ => columnName
+            };
+        }
         private string GenerateDeleteSql(string tableName, Dictionary<string, object> where, long? id)
         {
             if (id.HasValue)

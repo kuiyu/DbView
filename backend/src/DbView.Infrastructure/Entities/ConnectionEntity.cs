@@ -2,7 +2,7 @@ using FreeSql.DataAnnotations;
 
 namespace DbView.Infrastructure.Entities
 {
-    [Table(Name = "db_connections")]
+    [Table(Name = "dbview_connections")]
     public class ConnectionEntity
     {
         [Column(IsIdentity = true, IsPrimary = true)]

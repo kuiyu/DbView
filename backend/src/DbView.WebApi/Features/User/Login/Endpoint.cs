@@ -1,10 +1,11 @@
 using FastEndpoints;
 using DbView.Application;
 using DbView.Application.Users.DTOs;
+using DbView.Core;
 
 namespace DbView.WebApi.Features.User.Login
 {
-    internal sealed class LoginEndpoint : Endpoint<LoginRequest, LoginResponse>
+    internal sealed class LoginEndpoint : Endpoint<LoginRequest, object>
     {
         private readonly IUserAppService _userAppService;
         private readonly IConfiguration _configuration;
@@ -39,44 +40,20 @@ namespace DbView.WebApi.Features.User.Login
                 return;
             }
 
+            var user=new DbView.Core.User(0);
+            user.UserName= r.Username;
             // 生成JWT Token
-            var token = GenerateToken(result.Username, result.Role);
-
-            Response = new LoginResponse
+            var token =JwtHelper.GenerateToken(user.GetClaims() ,new JwtSettings
             {
-                Success = true,
-                Message = result.Message,
-                Token = token,
-                Username = result.Username
-            };
+                SecretKey = _configuration["Jwt:SecurityKey"].ToString(),
+                Audience = _configuration["Jwt:Audience"].ToString(),
+                Issuer = _configuration["Jwt:Issuer"].ToString(),
+                Expire = 60 * 24 * 365
+            });
+
+            Response = new { token = token };
         }
 
-        private string GenerateToken(string username, string role)
-        {
-            var issuer = _configuration["Jwt:Issuer"] ?? "";
-            var audience = _configuration["Jwt:Audience"] ?? "";
-            var securityKey = _configuration["Jwt:SecurityKey"] ?? "";
-            var expireMinutes = int.Parse(_configuration["Jwt:Expire"] ?? "60");
-
-            var signingCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
-                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(securityKey)),
-                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256);
-
-            var claims = new[]
-            {
-                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, username),
-                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, role),
-                new System.Security.Claims.Claim("username", username)
-            };
-
-            var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
-                issuer: issuer,
-                audience: audience,
-                claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(expireMinutes),
-                signingCredentials: signingCredentials);
-
-            return new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
-        }
+        
     }
 }

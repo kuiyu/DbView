@@ -1,10 +1,6 @@
 using FastEndpoints;
-using FastEndpoints.Security;
 using FastEndpoints.Swagger;
 using System.Text.Json;
-using DbView.Application;
-using DbView.Core;
-using DbView.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,8 +29,12 @@ if (app.Environment.IsDevelopment())
     app.UseDeveloperExceptionPage();
 }
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseCors();
 app.UseAuthentication().UseAuthorization();
+
+app.MapFallbackToFile("index.html");
 
 app.UseFastEndpoints(c =>
 {
@@ -58,7 +58,7 @@ if (app.Environment.IsDevelopment())
 {
     app.MapGet("/", async context =>
     {
-        context.Response.Redirect("/swagger");
+        context.Response.Redirect("/index.html");
         await Task.CompletedTask;
     });
 }
