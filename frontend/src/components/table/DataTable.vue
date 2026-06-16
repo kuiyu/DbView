@@ -7,7 +7,7 @@
       </t-button>
       <t-button @click="onImport">导入</t-button>
       <t-button @click="onExport">导出</t-button>
-      <t-button @click="onRefresh">刷新</t-button>
+      <t-button @click="onRefresh" :loading="loading">刷新</t-button>
     </div>
 
     <div class="table-container">
@@ -20,6 +20,7 @@
         :stripe="true"
         :bordered="true"
         :select-all="true"
+        :loading="loading"
         @select-change="onSelectChange"
         @page-change="onPageChange"
         @select-all-change="onSelectAllChange"
@@ -78,6 +79,7 @@ const primaryKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = ref<number[]>([])
 const selectedRows = ref<any[]>([])
 const pagination = ref({ current: 1, pageSize: 20, total: 0 })
+const loading = ref(false)
 const editDialog = ref<InstanceType<typeof EditDialog>>()
 const importDialog = ref<InstanceType<typeof ImportDialog>>()
 const confirmDialog = ref<InstanceType<typeof ConfirmDialog>>()
@@ -162,6 +164,7 @@ const formatCellValue = (value: any): string => {
 }
 
 const loadData = async () => {
+  loading.value = true
   try {
     const result: any = await tableApi.getTableData(
       props.connectionId,
@@ -181,6 +184,8 @@ const loadData = async () => {
   } catch (error) {
     MessagePlugin.error('加载数据失败')
     console.error(error)
+  } finally {
+    loading.value = false
   }
 }
 
