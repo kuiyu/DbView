@@ -130,12 +130,13 @@ const tableColumns = computed(() => {
   const cols = columnNames.value.map((col) => ({
     title: col,
     colKey: col,
-    width: 150,
+    width: col.toLowerCase() === 'id' ? 120 : 150,
     cell: 'default'
   }))
   return [
+    { colKey: 'row-select', type: 'multiple', width: 50 },
     ...cols,
-    { title: '操作', colKey: 'operation', width: 180, fixed: 'right' as const }
+    { title: '操作', colKey: 'operation', width: 120, fixed: 'right' as const }
   ]
 })
 

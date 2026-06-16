@@ -83,7 +83,21 @@ namespace DbView.Infrastructure.Services
                 var row = new object[reader.FieldCount];
                 for (int i = 0; i < reader.FieldCount; i++)
                 {
-                    row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    if (reader.IsDBNull(i))
+                    {
+                        row[i] = null;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            row[i] = reader.GetValue(i);
+                        }
+                        catch
+                        {
+                            row[i] = reader.GetFieldValue<string>(i);
+                        }
+                    }
                 }
                 items.Add(row);
             }

@@ -15,7 +15,7 @@ namespace DbView.WebApi.Features.Connection.Delete
         public override void Configure()
         {
             Delete("/connections/{Id}");
-            AllowAnonymous();
+
         }
 
         public override async Task HandleAsync(DeleteConnectionRequest r, CancellationToken c)

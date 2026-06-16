@@ -48,6 +48,31 @@
                 <span class="table-name" @click="onTableSelectByName(table.tableName)">{{ table.tableName }}</span>
                 <t-button theme="danger" size="small" variant="text" class="delete-table-btn" @click.stop="onDeleteTable(table.tableName)">删除</t-button>
               </div>
+              <!-- 自动备份配置 -->
+              <div v-if="currentConnection?.id === connection.id" class="backup-config-section">
+                <div class="backup-config-header">
+                  <span class="backup-config-title">自动备份</span>
+                  <t-switch v-model="backupConfig.enabled" @change="onBackupConfigChange" />
+                </div>
+                <div v-if="backupConfig.enabled" class="backup-config-body">
+                  <div class="config-row">
+                    <span class="config-label">备份间隔</span>
+                    <t-input-number v-model="backupConfig.intervalHours" :min="1" :max="720" :step="1" theme="normal" size="small" @change="onBackupConfigChange">
+                      <template #suffix>小时</template>
+                    </t-input-number>
+                  </div>
+                  <div class="config-row">
+                    <span class="config-label">保留份数</span>
+                    <t-input-number v-model="backupConfig.maxBackups" :min="1" :max="100" :step="1" theme="normal" size="small" @change="onBackupConfigChange">
+                      <template #suffix>份</template>
+                    </t-input-number>
+                  </div>
+                  <div v-if="backupConfig.lastBackupTime" class="config-row">
+                    <span class="config-label">上次备份</span>
+                    <span class="config-value">{{ formatTime(backupConfig.lastBackupTime) }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -87,7 +112,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 import { AddIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-vue-next'
 import MainLayout from '../layouts/MainLayout.vue'
 import ConnectionDialog from '../components/connection/ConnectionDialog.vue'
@@ -109,6 +134,7 @@ const tables = ref<Table[]>([])
 const searchKeyword = ref('')
 const loadingTables = ref(false)
 const expandedConnections = ref<number[]>([])
+const backupConfig = ref({ enabled: false, intervalHours: 24, maxBackups: 10, lastBackupTime: null as string | null })
 
 const menuOptions = [
   { content: '备份', value: 'backup' },
@@ -183,12 +209,53 @@ const loadTables = async () => {
   try {
     const response: any = await tableApi.getTables(currentConnection.value.id)
     tables.value = response.items || response || []
+    await loadBackupConfig()
   } catch (error) {
     console.error('Failed to load tables:', error)
     tables.value = []
   } finally {
     loadingTables.value = false
   }
+}
+
+const loadBackupConfig = async () => {
+  if (!currentConnection.value?.id) return
+  try {
+    const result: any = await backupApi.getBackupConfig(currentConnection.value.id)
+    const config = result.config || result
+    backupConfig.value = {
+      enabled: config.enabled || false,
+      intervalHours: config.intervalHours || 24,
+      maxBackups: config.maxBackups || 10,
+      lastBackupTime: config.lastBackupTime || null
+    }
+  } catch (error) {
+    backupConfig.value = { enabled: false, intervalHours: 24, maxBackups: 10, lastBackupTime: null }
+  }
+}
+
+let backupConfigTimer: ReturnType<typeof setTimeout> | null = null
+
+const onBackupConfigChange = () => {
+  if (backupConfigTimer) clearTimeout(backupConfigTimer)
+  backupConfigTimer = setTimeout(async () => {
+    if (!currentConnection.value?.id) return
+    try {
+      await backupApi.updateBackupConfig(currentConnection.value.id, {
+        enabled: backupConfig.value.enabled,
+        intervalHours: backupConfig.value.intervalHours,
+        maxBackups: backupConfig.value.maxBackups
+      })
+      MessagePlugin.success('备份配置已保存')
+    } catch (error) {
+      MessagePlugin.error('保存备份配置失败')
+    }
+  }, 500)
+}
+
+const formatTime = (time: string | null) => {
+  if (!time) return '-'
+  return new Date(time).toLocaleString()
 }
 
 const openConnectionDialog = () => {
@@ -246,16 +313,24 @@ const clearTable = () => {
 const onDeleteTable = async (tableName: string) => {
   if (!currentConnection.value?.id) return
   
-  try {
-    await tableApi.deleteTable(currentConnection.value.id, tableName)
-    MessagePlugin.success('表删除成功')
-    if (currentTable.value === tableName) {
-      currentTable.value = ''
+  DialogPlugin.confirm({
+    header: '确认删除',
+    body: `确定要删除表 "${tableName}" 吗？此操作不可恢复。`,
+    confirmBtn: { content: '删除', theme: 'danger' },
+    cancelBtn: '取消',
+    onConfirm: async () => {
+      try {
+        await tableApi.deleteTable(currentConnection.value.id, tableName)
+        MessagePlugin.success('表删除成功')
+        if (currentTable.value === tableName) {
+          currentTable.value = ''
+        }
+        await loadTables()
+      } catch (error) {
+        MessagePlugin.error('删除表失败')
+      }
     }
-    await loadTables()
-  } catch (error) {
-    MessagePlugin.error('删除表失败')
-  }
+  })
 }
 
 watch(() => currentConnection.value, () => {
@@ -454,5 +529,47 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   background: #fff;
+}
+
+.backup-config-section {
+  padding: 8px 12px;
+  border-top: 1px solid #e8e8e8;
+  margin-top: 4px;
+}
+
+.backup-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.backup-config-title {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}
+
+.backup-config-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.config-label {
+  font-size: 12px;
+  color: #999;
+}
+
+.config-value {
+  font-size: 12px;
+  color: #333;
 }
 </style>

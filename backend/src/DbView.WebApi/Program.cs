@@ -1,6 +1,7 @@
 using FastEndpoints;
 using FastEndpoints.Swagger;
 using System.Text.Json;
+using DbView.WebApi.Features.Backup;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +22,8 @@ builder.Services.AddMediator();
 builder.Services.AddEntityMapper();
 
 builder.Services.AddDatabase(autoSync: true);
+
+builder.Services.AddHostedService<BackupSchedulerService>();
 
 var app = builder.Build();
 

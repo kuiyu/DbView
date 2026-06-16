@@ -26,5 +26,15 @@ export const backupApi = {
     return request.get(`/connections/${connectionId}/backups/${backupId}/download`, {
       responseType: 'blob'
     })
+  },
+
+  // 获取自动备份配置
+  getBackupConfig(connectionId: number) {
+    return request.get(`/connections/${connectionId}/backup-config`)
+  },
+
+  // 更新自动备份配置
+  updateBackupConfig(connectionId: number, config: { enabled: boolean; intervalHours: number; maxBackups: number }) {
+    return request.put(`/connections/${connectionId}/backup-config`, config)
   }
 }
