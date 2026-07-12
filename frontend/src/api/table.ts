@@ -1,5 +1,11 @@
 import request from '../utils/request'
 
+export interface QueryFilter {
+  columnName: string
+  operator: string
+  value: string
+}
+
 export const tableApi = {
   getTables(connectionId: number) {
     return request.get(`/connections/${connectionId}/tables`)
@@ -12,6 +18,16 @@ export const tableApi = {
   getTableData(connectionId: number, tableName: string, page: number, pageSize: number) {
     return request.get(`/connections/${connectionId}/tables/${tableName}/data`, {
       params: { page, pageSize }
+    })
+  },
+
+  queryTableData(connectionId: number, tableName: string, filters: QueryFilter[], orderBy: string, orderDirection: string, page: number, pageSize: number) {
+    return request.post(`/connections/${connectionId}/tables/${tableName}/query`, {
+      filters,
+      orderBy,
+      orderDirection,
+      page,
+      pageSize
     })
   },
 

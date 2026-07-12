@@ -48,6 +48,7 @@ namespace DbView.WebApi.Features.Table.DropTable
                 "mysql" => $"`{tableName}`",
                 "sqlite" => $"\"{tableName}\"",
                 "sqlserver" => $"[{tableName}]",
+                "oracle" => $"\"{tableName}\"",
                 _ => tableName
             };
         }

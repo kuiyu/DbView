@@ -14,6 +14,7 @@
           <t-radio-button value="mysql">MySQL</t-radio-button>
           <t-radio-button value="sqlserver">SQL Server</t-radio-button>
           <t-radio-button value="sqlite">SQLite</t-radio-button>
+          <t-radio-button value="oracle">Oracle</t-radio-button>
         </t-radio-group>
       </t-form-item>
 
@@ -60,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RefreshIcon } from 'tdesign-icons-vue-next'
 import { connectionApi } from '../../api/connection'
@@ -70,6 +71,14 @@ const form = ref()
 const testing = ref(false)
 const testResult = ref<{ success: boolean; message: string } | null>(null)
 const testPassed = ref(false)
+
+const defaultPorts: Record<string, number> = {
+  postgresql: 5432,
+  mysql: 3306,
+  sqlserver: 1433,
+  sqlite: 0,
+  oracle: 1521
+}
 
 const formData = reactive({
   name: '',
@@ -113,6 +122,10 @@ const open = () => {
   formData.password = ''
   formData.dbType = 'postgresql'
 }
+
+watch(() => formData.dbType, (newType) => {
+  formData.port = defaultPorts[newType] || 5432
+})
 
 const onTestConnection = async () => {
   // 先验证表单

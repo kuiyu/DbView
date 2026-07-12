@@ -1,5 +1,6 @@
 <template>
   <div class="data-table">
+    <filter-bar :columns="columnNames" :loading="loading" @search="onFilterSearch" @reset="onFilterReset" />
     <div class="table-toolbar">
       <t-button theme="primary" @click="onAdd">新增</t-button>
       <t-button theme="danger" :disabled="!selectedRowKeys.length" @click="onBatchDelete">
@@ -57,11 +58,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { tableApi } from '../../api/table'
+import { tableApi, type QueryFilter } from '../../api/table'
 import { structureApi } from '../../api/structure'
 import EditDialog from './EditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
+import FilterBar from './FilterBar.vue'
 
 const props = defineProps<{
   connectionId: number,
@@ -83,6 +85,8 @@ const loading = ref(false)
 const editDialog = ref<InstanceType<typeof EditDialog>>()
 const importDialog = ref<InstanceType<typeof ImportDialog>>()
 const confirmDialog = ref<InstanceType<typeof ConfirmDialog>>()
+const activeFilters = ref<QueryFilter[]>([])
+const isFiltering = ref(false)
 
 const dateTypeKeywords = ['date', 'time', 'timestamp', 'datetime']
 const booleanTypeKeywords = ['bool', 'boolean']
@@ -166,12 +170,25 @@ const formatCellValue = (value: any): string => {
 const loadData = async () => {
   loading.value = true
   try {
-    const result: any = await tableApi.getTableData(
-      props.connectionId,
-      props.tableName,
-      pagination.value.current,
-      pagination.value.pageSize
-    )
+    let result: any
+    if (isFiltering.value && activeFilters.value.length > 0) {
+      result = await tableApi.queryTableData(
+        props.connectionId,
+        props.tableName,
+        activeFilters.value,
+        '',
+        'asc',
+        pagination.value.current,
+        pagination.value.pageSize
+      )
+    } else {
+      result = await tableApi.getTableData(
+        props.connectionId,
+        props.tableName,
+        pagination.value.current,
+        pagination.value.pageSize
+      )
+    }
     // 兼容后端GlobalResponseProcessor包装的响应格式 {success, code, msg, result: {...}}
     // 以及未包装的原始响应格式 {items: [...], total: N}
     const data = result.result || result
@@ -347,6 +364,20 @@ const onExport = () => {
 const onRefresh = () => {
   loadData()
   emit('refresh')
+}
+
+const onFilterSearch = (filters: QueryFilter[]) => {
+  activeFilters.value = filters
+  isFiltering.value = filters.length > 0
+  pagination.value.current = 1
+  loadData()
+}
+
+const onFilterReset = () => {
+  activeFilters.value = []
+  isFiltering.value = false
+  pagination.value.current = 1
+  loadData()
 }
 
 const onEditSave = async (formData: Record<string, any>, isEdit: boolean) => {

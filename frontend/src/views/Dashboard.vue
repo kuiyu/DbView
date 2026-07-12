@@ -83,11 +83,22 @@
       <div v-if="currentTable && currentConnection" class="data-panel">
         <div class="panel-header">
           <span class="panel-title">{{ currentConnection.name }} / {{ currentTable }}</span>
+          <div class="panel-tabs">
+            <t-button :theme="activeTab === 'data' ? 'primary' : 'default'" size="small" variant="text" @click="activeTab = 'data'">数据</t-button>
+            <t-button :theme="activeTab === 'sql' ? 'primary' : 'default'" size="small" variant="text" @click="activeTab = 'sql'">SQL</t-button>
+          </div>
           <t-button theme="default" size="small" variant="text" @click="clearTable">关闭</t-button>
         </div>
         <data-table
+          v-if="activeTab === 'data'"
           :connection-id="currentConnection.id"
           :table-name="currentTable"
+        />
+        <sql-editor
+          v-else-if="activeTab === 'sql'"
+          :initial-sql="`SELECT * FROM ${currentTable}`"
+          :table-name="currentTable"
+          @execute="onExecuteSql"
         />
       </div>
       <div v-else-if="currentConnection" class="welcome-panel">
@@ -117,9 +128,11 @@ import { AddIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-vue-next'
 import MainLayout from '../layouts/MainLayout.vue'
 import ConnectionDialog from '../components/connection/ConnectionDialog.vue'
 import DataTable from '../components/table/DataTable.vue'
+import SqlEditor from '../components/SqlEditor.vue'
 import { connectionApi } from '../api/connection'
 import { tableApi } from '../api/table'
 import { backupApi } from '../api/backup'
+import { sqlApi } from '../api/sql'
 
 interface Table {
   tableName: string
@@ -135,6 +148,8 @@ const searchKeyword = ref('')
 const loadingTables = ref(false)
 const expandedConnections = ref<number[]>([])
 const backupConfig = ref({ enabled: false, intervalHours: 24, maxBackups: 10, lastBackupTime: null as string | null })
+const activeTab = ref<'data' | 'sql'>('data')
+const sqlResult = ref<any>(null)
 
 const menuOptions = [
   { content: '备份', value: 'backup' },
@@ -308,6 +323,19 @@ const refreshTables = () => {
 
 const clearTable = () => {
   currentTable.value = ''
+  activeTab.value = 'data'
+}
+
+const onExecuteSql = async (sql: string) => {
+  if (!currentConnection.value?.id) return
+  try {
+    const result: any = await sqlApi.executeSql(currentConnection.value.id, sql)
+    sqlResult.value = result.result || result
+    MessagePlugin.success('SQL执行成功')
+  } catch (error) {
+    MessagePlugin.error('SQL执行失败')
+    console.error(error)
+  }
 }
 
 const onDeleteTable = async (tableName: string) => {
@@ -485,6 +513,11 @@ onMounted(() => {
   flex-direction: column;
   background: #fff;
   overflow: hidden;
+}
+
+.panel-tabs {
+  display: flex;
+  gap: 4px;
 }
 
 .welcome-panel {

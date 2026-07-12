@@ -90,13 +90,76 @@ namespace DbView.WebApi.Features.Backup
             foreach (var table in tables)
             {
                 sb.AppendLine($"-- 表: {table.TableName}");
-                sb.AppendLine($"COPY {table.TableName} TO STDIN;");
 
-                // 这里可以添加实际的数据导出逻辑
+                var columns = await _databaseService.GetTableColumnNamesAsync(connection, table.TableName, c);
+                var rows = await _databaseService.GetAllTableDataAsync(connection, table.TableName, c);
+
+                if (columns.Count > 0 && rows.Count > 0)
+                {
+                    var quotedColumns = columns.Select(col => GetQuotedColumnName(connection.DbType, col));
+                    var columnList = string.Join(", ", quotedColumns);
+
+                    foreach (var row in rows)
+                    {
+                        var values = new List<string>();
+                        for (int i = 0; i < row.Length; i++)
+                        {
+                            values.Add(FormatValue(row[i], connection.DbType));
+                        }
+                        sb.AppendLine($"INSERT INTO {GetQuotedTableName(connection.DbType, table.TableName)} ({columnList}) VALUES ({string.Join(", ", values)});");
+                    }
+                }
+
                 sb.AppendLine();
             }
 
             return sb.ToString();
+        }
+
+        private string GetQuotedColumnName(string dbType, string columnName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{columnName}\"",
+                "mysql" => $"`{columnName}`",
+                "sqlite" => $"\"{columnName}\"",
+                "sqlserver" => $"[{columnName}]",
+                "oracle" => $"\"{columnName}\"",
+                _ => columnName
+            };
+        }
+
+        private string GetQuotedTableName(string dbType, string tableName)
+        {
+            return dbType.ToLower() switch
+            {
+                "postgresql" => $"\"{tableName}\"",
+                "mysql" => $"`{tableName}`",
+                "sqlite" => $"\"{tableName}\"",
+                "sqlserver" => $"[{tableName}]",
+                "oracle" => $"\"{tableName}\"",
+                _ => tableName
+            };
+        }
+
+        private string FormatValue(object value, string dbType)
+        {
+            if (value == null || value == DBNull.Value)
+                return "NULL";
+
+            if (value is string strValue)
+                return $"'{strValue.Replace("'", "''")}'";
+
+            if (value is DateTime dtValue)
+                return $"'{dtValue:yyyy-MM-dd HH:mm:ss}'";
+
+            if (value is bool boolValue)
+                return dbType.ToLower() == "oracle" ? (boolValue ? "1" : "0") : (boolValue ? "TRUE" : "FALSE");
+
+            if (value is byte[] byteArray)
+                return $"0x{BitConverter.ToString(byteArray).Replace("-", "")}";
+
+            return value.ToString() ?? "NULL";
         }
     }
 }

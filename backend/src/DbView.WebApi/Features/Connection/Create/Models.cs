@@ -45,7 +45,7 @@ namespace DbView.WebApi.Features.Connection.Create
 
             RuleFor(x => x.DbType)
                 .NotEmpty().WithMessage("数据库类型不能为空")
-                .Must(x => new[] { "postgresql", "mysql", "sqlite", "sqlserver" }.Contains(x.ToLower()))
+                .Must(x => new[] { "postgresql", "mysql", "sqlite", "sqlserver", "oracle" }.Contains(x.ToLower()))
                 .WithMessage("不支持的数据库类型");
         }
     }

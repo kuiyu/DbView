@@ -1,5 +1,6 @@
 using DbView.Core.Models;
 using System.Data.Common;
+using System.Text;
 
 namespace DbView.Infrastructure.Services
 {
@@ -111,6 +112,127 @@ namespace DbView.Infrastructure.Services
             };
         }
 
+        public async Task<object> QueryTableDataAsync(Connection connection, string tableName, List<QueryFilter> filters, string orderBy, string orderDirection, int page, int pageSize, CancellationToken cancellationToken = default)
+        {
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var quotedTableName = GetQuotedTableName(connection.DbType, tableName);
+            var whereClause = BuildWhereClause(connection.DbType, filters);
+
+            var countCommand = conn.CreateCommand();
+            countCommand.CommandText = $"SELECT COUNT(*) FROM {quotedTableName}{whereClause}";
+            var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
+            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, cancellationToken);
+            var orderByClause = BuildOrderByClause(connection.DbType, orderBy, orderDirection, primaryKeys);
+
+            var command = conn.CreateCommand();
+            command.CommandText = $"SELECT * FROM {quotedTableName}{whereClause}{orderByClause} LIMIT {pageSize} OFFSET {(page - 1) * pageSize}";
+
+            var items = new List<object[]>();
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var row = new object[reader.FieldCount];
+                for (int i = 0; i < reader.FieldCount; i++)
+                {
+                    if (reader.IsDBNull(i))
+                    {
+                        row[i] = null;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            row[i] = reader.GetValue(i);
+                        }
+                        catch
+                        {
+                            row[i] = reader.GetFieldValue<string>(i);
+                        }
+                    }
+                }
+                items.Add(row);
+            }
+
+            return new
+            {
+                Items = items,
+                Total = total,
+                Page = page,
+                PageSize = pageSize
+            };
+        }
+
+        private string BuildWhereClause(string dbType, List<QueryFilter> filters)
+        {
+            if (filters == null || filters.Count == 0)
+                return string.Empty;
+
+            var conditions = new List<string>();
+            foreach (var filter in filters)
+            {
+                if (string.IsNullOrWhiteSpace(filter.ColumnName) || string.IsNullOrWhiteSpace(filter.Operator))
+                    continue;
+
+                var quotedColumn = GetQuotedColumnName(dbType, filter.ColumnName);
+                var condition = filter.Operator.ToLower() switch
+                {
+                    "eq" => $"{quotedColumn} = {FormatFilterValue(filter.Value, dbType)}",
+                    "neq" => $"{quotedColumn} != {FormatFilterValue(filter.Value, dbType)}",
+                    "gt" => $"{quotedColumn} > {FormatFilterValue(filter.Value, dbType)}",
+                    "gte" => $"{quotedColumn} >= {FormatFilterValue(filter.Value, dbType)}",
+                    "lt" => $"{quotedColumn} < {FormatFilterValue(filter.Value, dbType)}",
+                    "lte" => $"{quotedColumn} <= {FormatFilterValue(filter.Value, dbType)}",
+                    "like" => $"{quotedColumn} LIKE {FormatFilterValue(filter.Value, dbType)}",
+                    "notlike" => $"{quotedColumn} NOT LIKE {FormatFilterValue(filter.Value, dbType)}",
+                    "isnull" => $"{quotedColumn} IS NULL",
+                    "isnotnull" => $"{quotedColumn} IS NOT NULL",
+                    "isempty" => $"{quotedColumn} = ''",
+                    "isnotempty" => $"{quotedColumn} != ''",
+                    _ => $"{quotedColumn} = {FormatFilterValue(filter.Value, dbType)}"
+                };
+                conditions.Add(condition);
+            }
+
+            if (conditions.Count == 0)
+                return string.Empty;
+
+            return $" WHERE {string.Join(" AND ", conditions)}";
+        }
+
+        private string FormatFilterValue(string value, string dbType)
+        {
+            if (string.IsNullOrEmpty(value))
+                return "NULL";
+            if (value.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+                return "NULL";
+            if (int.TryParse(value, out _) || long.TryParse(value, out _) || double.TryParse(value, out _) || decimal.TryParse(value, out _))
+                return value;
+            if (value.Equals("true", StringComparison.OrdinalIgnoreCase))
+                return dbType.ToLower() == "oracle" ? "1" : "TRUE";
+            if (value.Equals("false", StringComparison.OrdinalIgnoreCase))
+                return dbType.ToLower() == "oracle" ? "0" : "FALSE";
+            if (value.Contains('%') || value.Contains('_'))
+                return $"'{value.Replace("'", "''")}'";
+            return $"'{value.Replace("'", "''")}'";
+        }
+
+        private string BuildOrderByClause(string dbType, string orderBy, string orderDirection, List<string> primaryKeys)
+        {
+            if (string.IsNullOrWhiteSpace(orderBy))
+            {
+                if (primaryKeys.Count > 0)
+                    return $" ORDER BY {string.Join(", ", primaryKeys.Select(k => GetQuotedColumnName(dbType, k)))}";
+                return string.Empty;
+            }
+
+            var quotedColumn = GetQuotedColumnName(dbType, orderBy);
+            var direction = string.Equals(orderDirection, "desc", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
+            return $" ORDER BY {quotedColumn} {direction}";
+        }
+
         private async Task<List<string>> GetPrimaryKeyColumnsAsync(DbConnection conn, string dbType, string tableName, CancellationToken cancellationToken)
         {
             var primaryKeys = new List<string>();
@@ -135,6 +257,7 @@ namespace DbView.Infrastructure.Services
                 "mysql" => $"`{columnName}`",
                 "sqlite" => $"\"{columnName}\"",
                 "sqlserver" => $"[{columnName}]",
+                "oracle" => $"\"{columnName}\"",
                 _ => columnName
             };
         }
@@ -170,6 +293,13 @@ namespace DbView.Infrastructure.Services
                     WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
                     AND tc.TABLE_NAME = '{tableName}'
                     ORDER BY ku.ORDINAL_POSITION",
+                "oracle" => $@"
+                    SELECT cols.column_name
+                    FROM all_constraints cons
+                    JOIN all_cons_columns cols ON cons.constraint_name = cols.constraint_name
+                    WHERE cons.constraint_type = 'P'
+                    AND cons.table_name = UPPER('{tableName}')
+                    AND cols.position = 1",
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
@@ -182,6 +312,7 @@ namespace DbView.Infrastructure.Services
                 "mysql" => $"`{tableName}`",
                 "sqlite" => $"\"{tableName}\"",
                 "sqlserver" => $"[{tableName}]",
+                "oracle" => $"\"{tableName}\"",
                 _ => tableName
             };
         }
@@ -214,6 +345,7 @@ namespace DbView.Infrastructure.Services
                 "mysql" => new MySqlConnector.MySqlConnection(GetConnectionString(connection)),
                 "sqlite" => new Microsoft.Data.Sqlite.SqliteConnection(GetConnectionString(connection)),
                 "sqlserver" => new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(connection)),
+                "oracle" => new Oracle.ManagedDataAccess.Client.OracleConnection(GetConnectionString(connection)),
                 _ => throw new NotSupportedException($"Database type {connection.DbType} is not supported")
             };
         }
@@ -226,6 +358,7 @@ namespace DbView.Infrastructure.Services
                 "mysql" => $"Server={connection.Host};Port={connection.Port};Database={connection.DatabaseName};User={connection.Username};Password={connection.Password}",
                 "sqlite" => $"Data Source={connection.DatabaseName}",
                 "sqlserver" => $"Server={connection.Host},{connection.Port};Database={connection.DatabaseName};User Id={connection.Username};Password={connection.Password}",
+                "oracle" => $"Data Source=(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={connection.Host})(PORT={connection.Port}))(CONNECT_DATA=(SERVICE_NAME={connection.DatabaseName})));User Id={connection.Username};Password={connection.Password}",
                 _ => throw new NotSupportedException($"Database type {connection.DbType} is not supported")
             };
         }
@@ -272,6 +405,14 @@ namespace DbView.Infrastructure.Services
                         AND ep.minor_id = 0
                     WHERE t.TABLE_TYPE = 'BASE TABLE'
                     ORDER BY t.TABLE_NAME",
+                "oracle" => @"
+                    SELECT 
+                        t.table_name,
+                        t.owner as table_schema,
+                        '' as table_comment
+                    FROM all_tables t
+                    WHERE t.owner = USER
+                    ORDER BY t.table_name",
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
@@ -346,6 +487,25 @@ namespace DbView.Infrastructure.Services
                         AND ep.minor_id = c.ORDINAL_POSITION
                     WHERE c.TABLE_NAME = '{tableName}'
                     ORDER BY c.ORDINAL_POSITION",
+                "oracle" => $@"
+                    SELECT 
+                        cols.column_name,
+                        cols.data_type,
+                        CASE WHEN cols.nullable = 'Y' THEN 1 ELSE 0 END as is_nullable,
+                        CASE WHEN cons.constraint_type = 'P' THEN 1 ELSE 0 END as is_primary_key,
+                        CASE WHEN cols.data_default IS NOT NULL AND UPPER(cols.data_default) LIKE 'SEQ%' THEN 1 ELSE 0 END as is_auto_increment,
+                        cols.data_default,
+                        '' as column_comment
+                    FROM all_tab_columns cols
+                    LEFT JOIN (
+                        SELECT cc.column_name, c.constraint_type
+                        FROM all_constraints c
+                        JOIN all_cons_columns cc ON c.constraint_name = cc.constraint_name
+                        WHERE c.constraint_type = 'P'
+                        AND c.table_name = UPPER('{tableName}')
+                    ) cons ON cols.column_name = cons.column_name
+                    WHERE cols.table_name = UPPER('{tableName}')
+                    ORDER BY cols.column_id",
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
@@ -367,6 +527,59 @@ namespace DbView.Infrastructure.Services
             }
 
             return columns;
+        }
+
+        public async Task<IReadOnlyList<object[]>> GetAllTableDataAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        {
+            var items = new List<object[]>();
+
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var quotedTableName = GetQuotedTableName(connection.DbType, tableName);
+
+            var columnNames = await GetTableColumnNamesAsync(connection, tableName, cancellationToken);
+            var quotedColumns = columnNames.Select(c => GetQuotedColumnName(connection.DbType, c));
+            var selectColumns = connection.DbType.ToLower() == "postgresql"
+                ? string.Join(", ", quotedColumns.Select(c => $"CAST({c} AS TEXT)"))
+                : "*";
+
+            var command = conn.CreateCommand();
+            command.CommandText = $"SELECT {selectColumns} FROM {quotedTableName}";
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var row = new object[reader.FieldCount];
+                for (int i = 0; i < reader.FieldCount; i++)
+                {
+                    if (reader.IsDBNull(i))
+                    {
+                        row[i] = null;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            row[i] = reader.GetValue(i);
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                row[i] = reader.GetFieldValue<string>(i);
+                            }
+                            catch
+                            {
+                                row[i] = reader[i]?.ToString();
+                            }
+                        }
+                    }
+                }
+                items.Add(row);
+            }
+
+            return items;
         }
 
         private string GetColumnsNameQuery(string dbType, string tableName)
@@ -392,6 +605,11 @@ namespace DbView.Infrastructure.Services
             FROM INFORMATION_SCHEMA.COLUMNS 
             WHERE TABLE_NAME = '{tableName}'
             ORDER BY ORDINAL_POSITION",
+                "oracle" => $@"
+            SELECT column_name 
+            FROM all_tab_columns 
+            WHERE table_name = UPPER('{tableName}')
+            ORDER BY column_id",
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
