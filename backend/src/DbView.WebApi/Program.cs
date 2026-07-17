@@ -31,8 +31,10 @@ if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
-app.UseStaticFiles();
+
 app.UseDefaultFiles();
+app.UseStaticFiles();
+
 
 app.UseCors();
 app.UseAuthentication().UseAuthorization();

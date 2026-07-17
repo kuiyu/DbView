@@ -5,7 +5,7 @@ using System.Xml.Linq;
 
 namespace DbView.Core
 {
-    public partial class User : AggregateRoot<long>
+    public partial class User : Entity<long>
     {
         #region 属性
         public string UserName { get; set; } = string.Empty;
@@ -20,6 +20,10 @@ namespace DbView.Core
 
         }
 
+        public User()
+        {
+            
+        }
         public List<Claim> GetClaims()
         {
             List<Claim> claims = new List<Claim>();

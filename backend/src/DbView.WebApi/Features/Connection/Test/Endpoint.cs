@@ -1,5 +1,6 @@
 using FastEndpoints;
 using DbView.Application.Services;
+using DbView.Core.Exceptions;
 
 namespace DbView.WebApi.Features.Connection.Test
 {
@@ -33,7 +34,10 @@ namespace DbView.WebApi.Features.Connection.Test
             };
 
             var success = await _connectionAppService.TestConnectionAsync(connection, c);
-
+            if(!success)
+            {
+                throw new DomainException("Connection failed");
+            }
             Response = new TestConnectionResponse
             {
                 Success = success,

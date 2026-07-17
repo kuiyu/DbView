@@ -60,9 +60,9 @@ public interface IRepository<TDomain, TId>
     #region 添加/更新/删除
 
     /// <summary>
-    /// 添加实体
+    /// 添加实体，返回已写入自增/标识 Id 的领域对象
     /// </summary>
-    Task AddAsync(TDomain entity, CancellationToken cancellationToken = default);
+    Task<TDomain> AddAsync(TDomain entity, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 批量添加实体

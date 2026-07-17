@@ -31,7 +31,7 @@ namespace DbView.Application.Services
         {
             connection.CreatedAt = DateTime.Now;
             connection.UpdatedAt = DateTime.Now;
-            await _connectionRepository.AddAsync(connection, cancellationToken);
+            connection = await _connectionRepository.AddAsync(connection, cancellationToken);
             return connection;
         }
 

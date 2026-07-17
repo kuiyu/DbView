@@ -14,6 +14,21 @@ namespace DbView.Infrastructure
         {
         }
 
+        /// <summary>
+        /// SQLite 下 ExecuteAffrowsAsync 不回填自增 Id，
+        /// 通过 ExecuteIdentityAsync 获取 newId 后重新查询完整实体返回。
+        /// </summary>
+        public override async Task<Connection> AddAsync(Connection domain, CancellationToken cancellationToken = default)
+        {
+            var entity = domain.Adapt<ConnectionEntity>();
+            var newId = await sql.Insert<ConnectionEntity>(entity).ExecuteIdentityAsync(cancellationToken);
+            var inserted = await sql.Select<ConnectionEntity>()
+                .Where(x => x.Id == newId)
+                .ToOneAsync(cancellationToken);
+
+            return inserted!.Adapt<Connection>();
+        }
+
         public async Task<IReadOnlyList<Connection>> GetByUserIdAsync(long userId, CancellationToken cancellationToken = default)
         {
             var entities = await sql.Select<ConnectionEntity>()

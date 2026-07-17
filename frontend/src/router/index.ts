@@ -1,17 +1,19 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
+import Login from '../views/Login.vue'
+import Dashboard from '../views/Dashboard.vue'
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(),
   routes: [
     {
       path: '/login',
       name: 'login',
-      component: () => import('../views/Login.vue')
+      component: Login
     },
     {
       path: '/',
       name: 'dashboard',
-      component: () => import('../views/Dashboard.vue'),
+      component: Dashboard,
       meta: { requiresAuth: true }
     }
   ]
@@ -24,7 +26,6 @@ router.beforeEach((to, _from, next) => {
   } else {
     next()
   }
-
 })
 
 export default router

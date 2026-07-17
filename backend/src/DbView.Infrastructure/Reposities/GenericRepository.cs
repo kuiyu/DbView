@@ -125,12 +125,14 @@ namespace DbView.Infrastructure
         }
  
    
-        public virtual async Task AddAsync(TDomain domain, CancellationToken cancellationToken = default)
+        public virtual async Task<TDomain> AddAsync(TDomain domain, CancellationToken cancellationToken = default)
         {
             var entity = domain.Adapt<TEntity>();
             await sql.Insert<TEntity>(entity).ExecuteAffrowsAsync(cancellationToken);
 
             await DispatchDomainEvents(domain);
+
+            return entity.Adapt<TDomain>();
         }
 
         public virtual async Task UpdateAsync(TDomain domain, CancellationToken cancellationToken = default)

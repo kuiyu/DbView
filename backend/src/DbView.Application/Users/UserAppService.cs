@@ -30,7 +30,7 @@ namespace DbView.Application.Users
 
                 if (configUser != null)
                 {
-                    user = new User(0)
+                    user = new User()
                     {
                         UserName = configUser.Username,
                         Password = configUser.Password,

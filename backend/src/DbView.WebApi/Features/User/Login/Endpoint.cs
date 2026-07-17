@@ -40,7 +40,7 @@ namespace DbView.WebApi.Features.User.Login
                 return;
             }
 
-            var user=new DbView.Core.User(0);
+            var user=new DbView.Core.User();
             user.UserName= result.Username;
             user.Role = result.Role;
             // 生成JWT Token

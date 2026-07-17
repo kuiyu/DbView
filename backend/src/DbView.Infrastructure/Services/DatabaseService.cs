@@ -14,7 +14,7 @@ namespace DbView.Infrastructure.Services
             await conn.OpenAsync(cancellationToken);
             
             var command = conn.CreateCommand();
-            command.CommandText = GetTablesQuery(connection.DbType);
+            command.CommandText = GetTablesQuery(connection.DbType, connection.DatabaseName);
             
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -38,7 +38,7 @@ namespace DbView.Infrastructure.Services
             await conn.OpenAsync(cancellationToken);
             
             var command = conn.CreateCommand();
-            command.CommandText = GetColumnsQuery(connection.DbType, tableName);
+            command.CommandText = GetColumnsQuery(connection.DbType, tableName, connection.DatabaseName);
             
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -69,7 +69,7 @@ namespace DbView.Infrastructure.Services
             countCommand.CommandText = $"SELECT COUNT(*) FROM {quotedTableName}";
             var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
             
-            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, cancellationToken);
+            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, connection.DatabaseName, cancellationToken);
             var orderByClause = primaryKeys.Count > 0 
                 ? $"ORDER BY {string.Join(", ", primaryKeys.Select(k => GetQuotedColumnName(connection.DbType, k)))}" 
                 : string.Empty;
@@ -124,7 +124,7 @@ namespace DbView.Infrastructure.Services
             countCommand.CommandText = $"SELECT COUNT(*) FROM {quotedTableName}{whereClause}";
             var total = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
-            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, cancellationToken);
+            var primaryKeys = await GetPrimaryKeyColumnsAsync(conn, connection.DbType, tableName, connection.DatabaseName, cancellationToken);
             var orderByClause = BuildOrderByClause(connection.DbType, orderBy, orderDirection, primaryKeys);
 
             var command = conn.CreateCommand();
@@ -233,12 +233,12 @@ namespace DbView.Infrastructure.Services
             return $" ORDER BY {quotedColumn} {direction}";
         }
 
-        private async Task<List<string>> GetPrimaryKeyColumnsAsync(DbConnection conn, string dbType, string tableName, CancellationToken cancellationToken)
+        private async Task<List<string>> GetPrimaryKeyColumnsAsync(DbConnection conn, string dbType, string tableName, string databaseName, CancellationToken cancellationToken)
         {
             var primaryKeys = new List<string>();
             
             var command = conn.CreateCommand();
-            command.CommandText = GetPrimaryKeysQuery(dbType, tableName);
+            command.CommandText = GetPrimaryKeysQuery(dbType, tableName, databaseName);
             
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -262,7 +262,7 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        private string GetPrimaryKeysQuery(string dbType, string tableName)
+        private string GetPrimaryKeysQuery(string dbType, string tableName, string databaseName)
         {
             return dbType.ToLower() switch
             {
@@ -278,6 +278,7 @@ namespace DbView.Infrastructure.Services
                     SELECT COLUMN_NAME
                     FROM information_schema.KEY_COLUMN_USAGE
                     WHERE TABLE_NAME = '{tableName}'
+                    AND TABLE_SCHEMA = '{databaseName}'
                     AND CONSTRAINT_NAME = 'PRIMARY'
                     ORDER BY ORDINAL_POSITION",
                 "sqlite" => $@"
@@ -363,7 +364,7 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        private string GetTablesQuery(string dbType)
+        private string GetTablesQuery(string dbType, string databaseName)
         {
             return dbType.ToLower() switch
             {
@@ -376,14 +377,14 @@ namespace DbView.Infrastructure.Services
                     WHERE t.table_type = 'BASE TABLE'
                     AND t.table_schema NOT IN ('pg_catalog', 'information_schema')
                     ORDER BY t.table_name",
-                "mysql" => @"
+                "mysql" => $@"
                     SELECT 
                         TABLE_NAME,
                         TABLE_SCHEMA,
                         TABLE_COMMENT
                     FROM information_schema.TABLES
                     WHERE TABLE_TYPE = 'BASE TABLE'
-                    AND TABLE_SCHEMA NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')
+                    AND TABLE_SCHEMA = '{databaseName}'
                     ORDER BY TABLE_NAME",
                 "sqlite" => @"
                     SELECT 
@@ -417,7 +418,7 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        private string GetColumnsQuery(string dbType, string tableName)
+        private string GetColumnsQuery(string dbType, string tableName, string databaseName)
         {
             return dbType.ToLower() switch
             {
@@ -452,6 +453,7 @@ namespace DbView.Infrastructure.Services
                         COLUMN_COMMENT
                     FROM information_schema.COLUMNS
                     WHERE TABLE_NAME = '{tableName}'
+                    AND TABLE_SCHEMA = '{databaseName}'
                     ORDER BY ORDINAL_POSITION",
                 "sqlite" => $@"
                     SELECT 
@@ -518,7 +520,7 @@ namespace DbView.Infrastructure.Services
             await conn.OpenAsync(cancellationToken);
 
             var command = conn.CreateCommand();
-            command.CommandText = GetColumnsNameQuery(connection.DbType, tableName);
+            command.CommandText = GetColumnsNameQuery(connection.DbType, tableName, connection.DatabaseName);
 
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -582,7 +584,7 @@ namespace DbView.Infrastructure.Services
             return items;
         }
 
-        private string GetColumnsNameQuery(string dbType, string tableName)
+        private string GetColumnsNameQuery(string dbType, string tableName, string databaseName)
         {
             return dbType.ToLower() switch
             {
@@ -595,6 +597,7 @@ namespace DbView.Infrastructure.Services
             SELECT COLUMN_NAME 
             FROM information_schema.COLUMNS 
             WHERE TABLE_NAME = '{tableName}'
+            AND TABLE_SCHEMA = '{databaseName}'
             ORDER BY ORDINAL_POSITION",
                 "sqlite" => $@"
             SELECT name 

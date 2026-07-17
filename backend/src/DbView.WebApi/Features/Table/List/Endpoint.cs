@@ -18,7 +18,7 @@ namespace DbView.WebApi.Features.Table.List
         public override void Configure()
         {
             Get("/connections/{ConnectionId}/tables");
-            AllowAnonymous();
+     
         }
 
         public override async Task HandleAsync(GetTableListRequest r, CancellationToken c)
