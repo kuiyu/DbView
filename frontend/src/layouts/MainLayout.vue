@@ -19,6 +19,8 @@
               </t-button>
             </t-dropdown>
           </div>
+
+          <change-password-dialog ref="changePasswordDialog" />
         </div>
       </div>
       <div class="content-area">
@@ -36,6 +38,7 @@ import { useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { MoreIcon } from 'tdesign-icons-vue-next'
 import { useUserStore } from '../stores/user'
+import ChangePasswordDialog from '../components/common/ChangePasswordDialog.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -53,7 +56,7 @@ const currentUser = ref({
 })
 
 const userMenuOptions = [
-  { content: '个人设置', value: 'settings' },
+  { content: '修改密码', value: 'change-password' },
   { content: '退出登录', value: 'logout' }
 ]
 
@@ -69,13 +72,15 @@ onMounted(() => {
   }
 })
 
+const changePasswordDialog = ref()
+
 const onUserMenuClick = (data: any) => {
   if (data.value === 'logout') {
     userStore.clearToken()
     MessagePlugin.success('已退出登录')
     router.push('/login')
-  } else if (data.value === 'settings') {
-    MessagePlugin.info('个人设置功能开发中')
+  } else if (data.value === 'change-password') {
+    changePasswordDialog.value?.open()
   }
 }
 

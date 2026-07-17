@@ -41,7 +41,8 @@ namespace DbView.WebApi.Features.User.Login
             }
 
             var user=new DbView.Core.User(0);
-            user.UserName= r.Username;
+            user.UserName= result.Username;
+            user.Role = result.Role;
             // 生成JWT Token
             var token =JwtHelper.GenerateToken(user.GetClaims() ,new JwtSettings
             {

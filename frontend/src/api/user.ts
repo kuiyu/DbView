@@ -15,5 +15,9 @@ export const userApi = {
 
   updateUser(id: number, data: any) {
     return request.put(`/users/${id}`, data)
+  },
+
+  changePassword(data: { oldPassword: string; newPassword: string }) {
+    return request.post('/auth/change-password', data)
   }
 }

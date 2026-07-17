@@ -23,7 +23,7 @@ builder.Services.AddEntityMapper();
 
 builder.Services.AddDatabase(autoSync: true);
 
-builder.Services.AddHostedService<BackupSchedulerService>();
+//builder.Services.AddHostedService<BackupSchedulerService>();
 
 var app = builder.Build();
 
@@ -31,9 +31,9 @@ if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
-
-app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseDefaultFiles();
+
 app.UseCors();
 app.UseAuthentication().UseAuthorization();
 
