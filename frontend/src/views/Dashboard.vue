@@ -94,12 +94,30 @@
           :connection-id="currentConnection.id"
           :table-name="currentTable"
         />
-        <sql-editor
-          v-else-if="activeTab === 'sql'"
-          :initial-sql="`SELECT * FROM ${currentTable}`"
-          :table-name="currentTable"
-          @execute="onExecuteSql"
-        />
+        <div v-else-if="activeTab === 'sql'" class="sql-panel">
+          <div class="sql-editor-slot">
+            <sql-editor
+              :initial-sql="`SELECT * FROM ${currentTable}`"
+              :table-name="currentTable"
+              @execute="onExecuteSql"
+            />
+          </div>
+          <div class="sql-result" v-if="sqlResult">
+            <div class="sql-result-header" :class="{ error: sqlResult.success === false }">
+              {{ sqlResult.message }}
+            </div>
+            <t-table
+              v-if="sqlResultColumns.length"
+              :data="sqlResultRows"
+              :columns="sqlResultColumns"
+              size="small"
+              row-key="__idx"
+              max-height="320"
+              stripe
+            />
+            <div v-else class="sql-result-empty">无返回数据</div>
+          </div>
+        </div>
       </div>
       <div v-else-if="currentConnection" class="welcome-panel">
         <div class="welcome-content">
@@ -338,6 +356,29 @@ const onExecuteSql = async (sql: string) => {
   }
 }
 
+const sqlResultRows = computed(() => {
+  const sr = sqlResult.value
+  if (!sr || !sr.data) return []
+  const cols = sr.columns || []
+  return sr.data.map((row: any[], idx: number) => {
+    const o: Record<string, any> = { __idx: idx }
+    row.forEach((v, i) => { o[cols[i] || `col_${i}`] = v === null ? '' : v })
+    return o
+  })
+})
+
+const sqlResultColumns = computed(() => {
+  const sr = sqlResult.value
+  const cols = sr?.columns || []
+  return cols.map((c: string, i: number) => ({
+    colKey: c || `col_${i}`,
+    title: c || `col_${i}`,
+    ellipsis: true,
+    minWidth: 90,
+    width: 160
+  }))
+})
+
 const onDeleteTable = async (tableName: string) => {
   if (!currentConnection.value?.id) return
   
@@ -562,6 +603,44 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   background: #fff;
+}
+
+.sql-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sql-editor-slot {
+  flex: 1 1 50%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sql-result {
+  flex: 1 1 50%;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid #e0e0e0;
+  padding: 10px 15px;
+}
+
+.sql-result-header {
+  font-size: 13px;
+  color: #333;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.sql-result-header.error {
+  color: #e34d59;
+}
+
+.sql-result-empty {
+  color: #999;
+  font-size: 13px;
 }
 
 .backup-config-section {

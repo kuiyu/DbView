@@ -48,8 +48,13 @@ namespace DbView.WebApi.Features.Sql.Execute
 
                 if (isQuery)
                 {
+                    var columns = new List<string>();
                     var items = new List<object[]>();
                     using var reader = await command.ExecuteReaderAsync(c);
+                    for (int i = 0; i < reader.FieldCount; i++)
+                    {
+                        columns.Add(reader.GetName(i));
+                    }
                     while (await reader.ReadAsync(c))
                     {
                         var row = new object[reader.FieldCount];
@@ -80,6 +85,7 @@ namespace DbView.WebApi.Features.Sql.Execute
                     {
                         success = true,
                         message = $"Query executed in {executionTime.TotalMilliseconds:F2}ms, {items.Count} rows returned",
+                        columns = columns,
                         data = items
                     }, cancellation: c);
                 }
