@@ -18,7 +18,7 @@ namespace DbView.WebApi.Features.Table.Structure
         public override void Configure()
         {
             Get("/connections/{ConnectionId}/tables/{TableName}");
-            AllowAnonymous();
+         
         }
 
         public override async Task HandleAsync(GetTableStructureRequest r, CancellationToken c)

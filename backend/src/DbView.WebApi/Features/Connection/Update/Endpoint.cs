@@ -15,7 +15,7 @@ namespace DbView.WebApi.Features.Connection.Update
         public override void Configure()
         {
             Put("/connections/{Id}");
-            AllowAnonymous();
+
             Validator<UpdateConnectionValidator>();
         }
 

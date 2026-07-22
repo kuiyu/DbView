@@ -24,7 +24,7 @@ namespace DbView.WebApi.Features.Backup
         public override void Configure()
         {
             Post("/connections/{ConnectionId}/backups");
-            AllowAnonymous();
+
         }
 
         public override async Task HandleAsync(CreateBackupRequest r, CancellationToken c)

@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Table.Query
         public override void Configure()
         {
             Post("/connections/{ConnectionId}/tables/{TableName}/query");
-            AllowAnonymous();
+      
         }
 
         public override async Task HandleAsync(QueryTableDataRequest r, CancellationToken c)

@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Sql.Execute
         public override void Configure()
         {
             Post("/connections/{ConnectionId}/sql/execute");
-            AllowAnonymous();
+            
         }
 
         public override async Task HandleAsync(ExecuteSqlRequest r, CancellationToken c)

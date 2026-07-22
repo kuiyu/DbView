@@ -2,6 +2,7 @@ using FastEndpoints;
 using DbView.Application;
 using DbView.Application.Users.DTOs;
 using DbView.Core;
+using DbView.Core.Exceptions;
 
 namespace DbView.WebApi.Features.User.Login
 {
@@ -32,12 +33,9 @@ namespace DbView.WebApi.Features.User.Login
 
             if (!result.Success)
             {
-                Response = new LoginResponse
-                {
-                    Success = false,
-                    Message = result.Message
-                };
-                return;
+ 
+                throw new DomainException(result.Message);
+                
             }
 
             var user=new DbView.Core.User();

@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Table.GetData
         public override void Configure()
         {
             Get("/connections/{ConnectionId}/tables/{TableName}/data");
-            AllowAnonymous();
+          
         }
 
         public override async Task HandleAsync(GetTableDataRequest r, CancellationToken c)

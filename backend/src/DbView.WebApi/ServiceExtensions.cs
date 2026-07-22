@@ -41,7 +41,7 @@ public static class ServiceExtensions
         {
             o.DocumentSettings = s =>
             {
-                s.Title = "Ips项目";
+                s.Title = "DbView数据库管理项目";
                 s.Version = "v1";
             };
         });

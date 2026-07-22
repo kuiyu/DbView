@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Table.UpdateData
         public override void Configure()
         {
             Put("/connections/{ConnectionId}/tables/{TableName}/data");
-            AllowAnonymous();
+      
         }
 
         public override async Task HandleAsync(UpdateTableDataRequest r, CancellationToken c)

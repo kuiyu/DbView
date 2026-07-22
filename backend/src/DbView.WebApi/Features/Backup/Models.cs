@@ -27,4 +27,21 @@ namespace DbView.WebApi.Features.Backup
         public List<BackupDto> Items { get; set; } = new();
         public int Total { get; set; }
     }
+
+    public class BackupConfigDto
+    {
+        public long Id { get; set; }
+        public long ConnectionId { get; set; }
+        public bool Enabled { get; set; }
+        public int IntervalHours { get; set; }
+        public int MaxBackups { get; set; }
+        public DateTime? LastBackupTime { get; set; }
+    }
+
+    public class UpdateBackupConfigRequest
+    {
+        public bool Enabled { get; set; }
+        public int IntervalHours { get; set; }
+        public int MaxBackups { get; set; }
+    }
 }

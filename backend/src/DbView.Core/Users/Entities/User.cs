@@ -7,6 +7,7 @@ namespace DbView.Core
 {
     public partial class User : Entity<long>
     {
+        public long Id { get; set; }
         #region 属性
         public string UserName { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;

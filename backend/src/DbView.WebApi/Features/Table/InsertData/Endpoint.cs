@@ -20,7 +20,7 @@ namespace DbView.WebApi.Features.Table.InsertData
         public override void Configure()
         {
             Post("/connections/{ConnectionId}/tables/{TableName}/data");
-            AllowAnonymous();
+       
         }
 
         public override async Task HandleAsync(InsertTableDataRequest r, CancellationToken c)
