@@ -1,24 +1,20 @@
 using FastEndpoints;
 using DbView.Core;
-
-using DbView.Infrastructure.Services;
+using DbView.Core.Abstractions;
 
 namespace DbView.WebApi.Features.Backup
 {
     internal sealed class CreateBackupEndpoint : Endpoint<CreateBackupRequest, CreateBackupResponse>
     {
         private readonly IConnectionRepository _connectionRepository;
-        private readonly DatabaseService _databaseService;
-        private readonly IConfiguration _configuration;
+        private readonly IBackupService _backupService;
 
         public CreateBackupEndpoint(
             IConnectionRepository connectionRepository,
-            DatabaseService databaseService,
-            IConfiguration configuration)
+            IBackupService backupService)
         {
             _connectionRepository = connectionRepository;
-            _databaseService = databaseService;
-            _configuration = configuration;
+            _backupService = backupService;
         }
 
         public override void Configure()
@@ -39,17 +35,7 @@ namespace DbView.WebApi.Features.Backup
             try
             {
                 var backupName = r.Name ?? $"backup_{DateTime.Now:yyyyMMdd_HHmmss}";
-                var backupDir = Path.Combine(AppContext.BaseDirectory, "backups");
-                Directory.CreateDirectory(backupDir);
-
-                var fileName = $"{backupName}.sql";
-                var filePath = Path.Combine(backupDir, fileName);
-
-                // 生成备份SQL
-                var sql = await GenerateBackupSql(connection, c);
-                await File.WriteAllTextAsync(filePath, sql, c);
-
-                var fileInfo = new FileInfo(filePath);
+                var result = await _backupService.CreateBackupAsync(connection, backupName, c);
 
                 var response = new CreateBackupResponse
                 {
@@ -60,9 +46,9 @@ namespace DbView.WebApi.Features.Backup
                         Id = DateTime.Now.Ticks,
                         Name = backupName,
                         ConnectionId = connection.Id,
-                        FileName = fileName,
-                        FileSize = fileInfo.Length,
-                        CreatedAt = DateTime.Now
+                        FileName = result.FileName,
+                        FileSize = result.FileSize,
+                        CreatedAt = result.CreatedAt
                     }
                 };
 
@@ -76,90 +62,6 @@ namespace DbView.WebApi.Features.Backup
                     message = $"备份失败: {ex.Message}"
                 }, 500, cancellation: c);
             }
-        }
-
-        private async Task<string> GenerateBackupSql(DbView.Core.Models.Connection connection, CancellationToken c)
-        {
-            var tables = await _databaseService.GetTablesAsync(connection, c);
-            var sb = new System.Text.StringBuilder();
-
-            sb.AppendLine($"-- 数据库备份: {connection.DatabaseName}");
-            sb.AppendLine($"-- 备份时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine();
-
-            foreach (var table in tables)
-            {
-                sb.AppendLine($"-- 表: {table.TableName}");
-
-                var columns = await _databaseService.GetTableColumnNamesAsync(connection, table.TableName, c);
-                var rows = await _databaseService.GetAllTableDataAsync(connection, table.TableName, c);
-
-                if (columns.Count > 0 && rows.Count > 0)
-                {
-                    var quotedColumns = columns.Select(col => GetQuotedColumnName(connection.DbType, col));
-                    var columnList = string.Join(", ", quotedColumns);
-
-                    foreach (var row in rows)
-                    {
-                        var values = new List<string>();
-                        for (int i = 0; i < row.Length; i++)
-                        {
-                            values.Add(FormatValue(row[i], connection.DbType));
-                        }
-                        sb.AppendLine($"INSERT INTO {GetQuotedTableName(connection.DbType, table.TableName)} ({columnList}) VALUES ({string.Join(", ", values)});");
-                    }
-                }
-
-                sb.AppendLine();
-            }
-
-            return sb.ToString();
-        }
-
-        private string GetQuotedColumnName(string dbType, string columnName)
-        {
-            return dbType.ToLower() switch
-            {
-                "postgresql" => $"\"{columnName}\"",
-                "mysql" => $"`{columnName}`",
-                "sqlite" => $"\"{columnName}\"",
-                "sqlserver" => $"[{columnName}]",
-                "oracle" => $"\"{columnName}\"",
-                _ => columnName
-            };
-        }
-
-        private string GetQuotedTableName(string dbType, string tableName)
-        {
-            return dbType.ToLower() switch
-            {
-                "postgresql" => $"\"{tableName}\"",
-                "mysql" => $"`{tableName}`",
-                "sqlite" => $"\"{tableName}\"",
-                "sqlserver" => $"[{tableName}]",
-                "oracle" => $"\"{tableName}\"",
-                _ => tableName
-            };
-        }
-
-        private string FormatValue(object value, string dbType)
-        {
-            if (value == null || value == DBNull.Value)
-                return "NULL";
-
-            if (value is string strValue)
-                return $"'{strValue.Replace("'", "''")}'";
-
-            if (value is DateTime dtValue)
-                return $"'{dtValue:yyyy-MM-dd HH:mm:ss}'";
-
-            if (value is bool boolValue)
-                return dbType.ToLower() == "oracle" ? (boolValue ? "1" : "0") : (boolValue ? "TRUE" : "FALSE");
-
-            if (value is byte[] byteArray)
-                return $"0x{BitConverter.ToString(byteArray).Replace("-", "")}";
-
-            return value.ToString() ?? "NULL";
         }
     }
 }

@@ -22,6 +22,7 @@ public static class ServiceExtensions
         services.RegisterServicesFromDbViewInfrastructure();
         services.AddScoped<DatabaseService>();
         services.AddScoped<ConnectionTestService>();
+        services.AddScoped<DbView.Core.Abstractions.IBackupService, DbView.Infrastructure.Services.BackupService>();
 
         services.AddAuthenticationJwtBearer(s => s.SigningKey = configuration.GetSection("Jwt:SecurityKey").Value) //add this
             .AddAuthorization(options =>
