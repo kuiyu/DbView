@@ -28,7 +28,7 @@
               <span class="expand-icon" :class="{ expanded: expandedConnections.includes(connection.id) }">▶</span>
               <span class="connection-icon">🖥️</span>
               <span class="connection-name">{{ connection.name }}</span>
-              <t-dropdown :options="menuOptions" @click="(data: any) => { if (data.value === 'delete') handleDeleteConnection(connection) }">
+              <t-dropdown :options="menuOptions" @click="(data: any) => handleMenu(data, connection)">
                 <t-button theme="default" size="small" variant="text" @click.stop class="more-btn">⋯</t-button>
               </t-dropdown>
             </div>
