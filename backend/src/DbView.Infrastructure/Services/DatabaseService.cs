@@ -616,5 +616,162 @@ namespace DbView.Infrastructure.Services
                 _ => throw new NotSupportedException($"Database type {dbType} is not supported")
             };
         }
+
+        // ============ DDL 操作（建表 / 增删改字段 / 改名） ============
+
+        public async Task<int> ExecuteDdlAsync(Connection connection, string sql, CancellationToken cancellationToken = default)
+        {
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var command = conn.CreateCommand();
+            command.CommandText = sql;
+
+            return await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        public async Task CreateTableAsync(Connection connection, string tableName, List<ColumnDefinition> columns, CancellationToken cancellationToken = default)
+        {
+            if (columns == null || columns.Count == 0)
+            {
+                throw new ArgumentException("至少需要一个字段");
+            }
+
+            var qt = GetQuotedTableName(connection.DbType, tableName);
+            var defs = columns.Select(col => BuildColumnDefinition(connection.DbType, col));
+            var sql = $"CREATE TABLE {qt} (\n  {string.Join(",\n  ", defs)}\n)";
+
+            await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        public async Task AddColumnAsync(Connection connection, string tableName, ColumnDefinition column, CancellationToken cancellationToken = default)
+        {
+            var qt = GetQuotedTableName(connection.DbType, tableName);
+            var qc = GetQuotedColumnName(connection.DbType, column.Name);
+            var type = MapColumnType(connection.DbType, column.Type);
+            var nullClause = column.Nullable ? "NULL" : "NOT NULL";
+
+            var sql = $"ALTER TABLE {qt} ADD COLUMN {qc} {type} {nullClause}";
+            await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        public async Task DropColumnAsync(Connection connection, string tableName, string columnName, CancellationToken cancellationToken = default)
+        {
+            var qt = GetQuotedTableName(connection.DbType, tableName);
+            var qc = GetQuotedColumnName(connection.DbType, columnName);
+
+            var sql = $"ALTER TABLE {qt} DROP COLUMN {qc}";
+            await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        public async Task AlterColumnAsync(Connection connection, string tableName, string columnName, ColumnDefinition column, CancellationToken cancellationToken = default)
+        {
+            var qt = GetQuotedTableName(connection.DbType, tableName);
+            var qc = GetQuotedColumnName(connection.DbType, columnName);
+            var type = MapColumnType(connection.DbType, column.Type);
+            var nullClause = column.Nullable ? "NULL" : "NOT NULL";
+
+            var sql = connection.DbType.ToLower() switch
+            {
+                "mysql" => $"ALTER TABLE {qt} MODIFY COLUMN {qc} {type} {nullClause}",
+                "postgresql" => $"ALTER TABLE {qt} ALTER COLUMN {qc} TYPE {type}",
+                "sqlserver" => $"ALTER TABLE {qt} ALTER COLUMN {qc} {type} {nullClause}",
+                "oracle" => $"ALTER TABLE {qt} MODIFY ({qc} {type} {nullClause})",
+                "sqlite" => throw new NotSupportedException("SQLite 不直接支持修改列类型，请通过重建表实现"),
+                _ => throw new NotSupportedException($"Database type {connection.DbType} is not supported")
+            };
+
+            await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        public async Task RenameTableAsync(Connection connection, string oldName, string newName, CancellationToken cancellationToken = default)
+        {
+            var qOld = GetQuotedTableName(connection.DbType, oldName);
+            var qNew = GetQuotedTableName(connection.DbType, newName);
+
+            var sql = $"ALTER TABLE {qOld} RENAME TO {qNew}";
+            await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        private string BuildColumnDefinition(string dbType, ColumnDefinition col)
+        {
+            var qc = GetQuotedColumnName(dbType, col.Name);
+            var type = MapColumnType(dbType, col.Type);
+
+            var parts = new List<string> { $"{qc} {type}" };
+            if (!col.Nullable)
+            {
+                parts.Add("NOT NULL");
+            }
+            if (col.AutoIncrement)
+            {
+                parts.Add(dbType.ToLower() == "mysql" ? "AUTO_INCREMENT" : "AUTOINCREMENT");
+            }
+            if (col.IsPrimaryKey)
+            {
+                parts.Add("PRIMARY KEY");
+            }
+            if (!string.IsNullOrWhiteSpace(col.DefaultValue))
+            {
+                parts.Add($"DEFAULT {col.DefaultValue}");
+            }
+
+            return string.Join(" ", parts);
+        }
+
+        private string MapColumnType(string dbType, string type)
+        {
+            var t = (type ?? "varchar").ToLower();
+
+            return dbType.ToLower() switch
+            {
+                "sqlite" => t switch
+                {
+                    "integer" => "INTEGER",
+                    "varchar" => "TEXT",
+                    "text" => "TEXT",
+                    "boolean" => "INTEGER",
+                    "timestamp" => "TEXT",
+                    _ => t.ToUpper()
+                },
+                "mysql" => t switch
+                {
+                    "integer" => "INT",
+                    "varchar" => "VARCHAR(255)",
+                    "text" => "TEXT",
+                    "boolean" => "TINYINT(1)",
+                    "timestamp" => "TIMESTAMP",
+                    _ => t.ToUpper()
+                },
+                "postgresql" => t switch
+                {
+                    "integer" => "INTEGER",
+                    "varchar" => "VARCHAR(255)",
+                    "text" => "TEXT",
+                    "boolean" => "BOOLEAN",
+                    "timestamp" => "TIMESTAMP",
+                    _ => t.ToUpper()
+                },
+                "sqlserver" => t switch
+                {
+                    "integer" => "INT",
+                    "varchar" => "NVARCHAR(255)",
+                    "text" => "NVARCHAR(MAX)",
+                    "boolean" => "BIT",
+                    "timestamp" => "DATETIME",
+                    _ => t.ToUpper()
+                },
+                "oracle" => t switch
+                {
+                    "integer" => "NUMBER(10)",
+                    "varchar" => "VARCHAR2(255)",
+                    "text" => "CLOB",
+                    "boolean" => "NUMBER(1)",
+                    "timestamp" => "TIMESTAMP",
+                    _ => t.ToUpper()
+                },
+                _ => t.ToUpper()
+            };
+        }
     }
 }

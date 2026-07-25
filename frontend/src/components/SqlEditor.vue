@@ -30,6 +30,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'execute', value: string): void
+  (e: 'export'): void
 }>()
 
 const sqlText = ref(props.initialSql || '')
@@ -42,11 +43,36 @@ const executeSql = () => {
 }
 
 const formatSql = () => {
-  // 实现SQL格式化
+  const sql = (sqlText.value || '').trim()
+  if (!sql) return
+
+  // 采用主要子句关键字（不区分大小写）在前换行并转大写，形成基础格式化
+  const clauseKeywords = [
+    'SELECT', 'FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'HAVING',
+    'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'JOIN', 'LIMIT', 'OFFSET',
+    'UNION', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM'
+  ]
+
+  let formatted = sql
+  for (const kw of clauseKeywords) {
+    const pattern = new RegExp('\\b' + kw.replace(' ', '\\s+') + '\\b', 'gi')
+    formatted = formatted.replace(pattern, (m) => '\n' + m.toUpperCase())
+  }
+
+  formatted = formatted
+    .split('\n')
+    .map((line, i) => (i === 0 ? line.trim() : '  ' + line.trim()))
+    .join('\n')
+    .trim()
+
+  // AND / OR 独立成行并缩进
+  formatted = formatted.replace(/\s+(AND|OR)\b/gi, '\n    $1')
+
+  sqlText.value = formatted
 }
 
 const exportResults = () => {
-  // 实现导出功能
+  emit('export')
 }
 </script>
 

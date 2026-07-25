@@ -100,6 +100,7 @@
               :initial-sql="`SELECT * FROM ${currentTable}`"
               :table-name="currentTable"
               @execute="onExecuteSql"
+              @export="onExportResult"
             />
           </div>
           <div class="sql-result" v-if="sqlResult">
@@ -354,6 +355,34 @@ const onExecuteSql = async (sql: string) => {
     MessagePlugin.error('SQL执行失败')
     console.error(error)
   }
+}
+
+const onExportResult = () => {
+  const sr = sqlResult.value
+  if (!sr || !sr.data || sr.data.length === 0) {
+    MessagePlugin.warning('没有可导出的结果')
+    return
+  }
+
+  const columns: string[] = sr.columns || []
+  const escapeCsv = (v: any) => {
+    const s = v === null || v === undefined ? '' : String(v)
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+  }
+
+  const header = columns.map(escapeCsv).join(',')
+  const lines = sr.data.map((row: any[]) => (Array.isArray(row) ? row : []).map(escapeCsv).join(','))
+  const csv = '﻿' + [header, ...lines].join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `query_result_${Date.now()}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 const sqlResultRows = computed(() => {
