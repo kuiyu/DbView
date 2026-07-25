@@ -338,6 +338,48 @@ namespace DbView.Infrastructure.Services
             };
         }
 
+        /// <summary>
+        /// 在单一数据库连接上顺序执行多条 SQL 语句。
+        /// 用于备份恢复：保证 SET FOREIGN_KEY_CHECKS / SET IDENTITY_INSERT 等连接级设置对整批生效，
+        /// 并容忍 DROP TABLE（目标表不存在）失败而继续后续语句。
+        /// </summary>
+        public async Task<(int Executed, int Skipped)> ExecuteBatchAsync(Connection connection, IEnumerable<string> statements, CancellationToken cancellationToken = default)
+        {
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var executed = 0;
+            var skipped = 0;
+            foreach (var raw in statements)
+            {
+                var statement = raw.Trim();
+                if (string.IsNullOrWhiteSpace(statement))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var command = conn.CreateCommand();
+                    command.CommandText = statement;
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                    executed++;
+                }
+                catch (Exception) when (IsDropTableStatement(statement))
+                {
+                    // 表不存在时 DROP 失败可忽略（如 Oracle 不支持 IF EXISTS）
+                    skipped++;
+                }
+            }
+
+            return (executed, skipped);
+        }
+
+        private static bool IsDropTableStatement(string statement)
+        {
+            return statement.Length >= 10 && statement.Substring(0, 10).ToUpperInvariant().StartsWith("DROP TABLE");
+        }
+
         private DbConnection CreateConnection(Connection connection)
         {
             return connection.DbType.ToLower() switch
@@ -642,6 +684,202 @@ namespace DbView.Infrastructure.Services
             var sql = $"CREATE TABLE {qt} (\n  {string.Join(",\n  ", defs)}\n)";
 
             await ExecuteDdlAsync(connection, sql, cancellationToken);
+        }
+
+        // ============ 备份用：生成建表语句（保留完整类型/主键/自增/默认值） ============
+
+        public async Task<(string Sql, List<string> AutoIncrementColumns)> GenerateCreateTableSqlAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        {
+            var dbType = connection.DbType.ToLower();
+            var quotedTableName = GetQuotedTableName(connection.DbType, tableName);
+
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var command = conn.CreateCommand();
+            command.CommandText = GetFullColumnsQuery(dbType, tableName, connection.DatabaseName);
+
+            var columnDefs = new List<string>();
+            var pkColumns = new List<string>();
+            var autoColumns = new List<string>();
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var colName = reader.GetString(0);
+                var colType = reader.GetString(1);
+                var isNullable = reader.GetBoolean(2);
+                var isPrimaryKey = reader.GetBoolean(3);
+                var isAutoIncrement = reader.GetBoolean(4);
+                var defaultValue = reader.IsDBNull(5) ? null : reader.GetString(5);
+
+                var qc = GetQuotedColumnName(connection.DbType, colName);
+                var parts = new List<string> { $"{qc} {colType}" };
+                if (!isNullable)
+                {
+                    parts.Add("NOT NULL");
+                }
+
+                // 自动增长关键字仅 MySQL/SQLServer 需要；PG 靠 DEFAULT nextval、SQLite 靠 INTEGER PRIMARY KEY、Oracle 靠序列/默认值实现
+                var autoKeyword = dbType switch
+                {
+                    "mysql" => isAutoIncrement ? "AUTO_INCREMENT" : null,
+                    "sqlserver" => isAutoIncrement ? "IDENTITY(1,1)" : null,
+                    _ => null
+                };
+                if (autoKeyword != null)
+                {
+                    parts.Add(autoKeyword);
+                }
+                if (isAutoIncrement)
+                {
+                    autoColumns.Add(colName);
+                }
+
+                if (!string.IsNullOrWhiteSpace(defaultValue))
+                {
+                    parts.Add($"DEFAULT {FormatDefaultValue(defaultValue, dbType)}");
+                }
+                columnDefs.Add(string.Join(" ", parts));
+                if (isPrimaryKey)
+                {
+                    pkColumns.Add(qc);
+                }
+            }
+
+            if (columnDefs.Count == 0)
+            {
+                throw new InvalidOperationException($"无法获取表 {tableName} 的列信息，可能该表不存在或无权访问");
+            }
+
+            if (pkColumns.Count > 0)
+            {
+                columnDefs.Add($"PRIMARY KEY ({string.Join(", ", pkColumns)})");
+            }
+
+            var sql = $"CREATE TABLE {quotedTableName} (\n  {string.Join(",\n  ", columnDefs)}\n);";
+            return (sql, autoColumns);
+        }
+
+        private string GetFullColumnsQuery(string dbType, string tableName, string databaseName)
+        {
+            return dbType switch
+            {
+                "mysql" => $@"
+                    SELECT COLUMN_NAME, COLUMN_TYPE,
+                           CASE WHEN IS_NULLABLE = 'YES' THEN 1 ELSE 0 END,
+                           CASE WHEN COLUMN_KEY = 'PRI' THEN 1 ELSE 0 END,
+                           CASE WHEN EXTRA LIKE '%auto_increment%' THEN 1 ELSE 0 END,
+                           COLUMN_DEFAULT
+                    FROM information_schema.COLUMNS
+                    WHERE TABLE_NAME = '{tableName}'
+                    AND TABLE_SCHEMA = '{databaseName}'
+                    ORDER BY ORDINAL_POSITION",
+                "sqlite" => $@"
+                    SELECT name, type,
+                           CASE WHEN ""notnull"" = 0 THEN 1 ELSE 0 END,
+                           CASE WHEN pk = 1 THEN 1 ELSE 0 END,
+                           CASE WHEN type LIKE '%AUTOINCREMENT%' THEN 1 ELSE 0 END,
+                           dflt_value
+                    FROM pragma_table_info('{tableName}')
+                    ORDER BY cid",
+                "postgresql" => $@"
+                    SELECT c.column_name,
+                           c.data_type || COALESCE('(' || NULLIF(c.character_maximum_length, 0)::text || ')', ''),
+                           CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END,
+                           CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END,
+                           CASE WHEN c.column_default LIKE 'nextval%' THEN 1 ELSE 0 END,
+                           c.column_default
+                    FROM information_schema.columns c
+                    LEFT JOIN (
+                        SELECT ku.column_name
+                        FROM information_schema.table_constraints tc
+                        JOIN information_schema.key_column_usage ku
+                            ON tc.constraint_name = ku.constraint_name
+                        WHERE tc.constraint_type = 'PRIMARY KEY'
+                        AND tc.table_name = '{tableName}'
+                    ) pk ON c.column_name = pk.column_name
+                    WHERE c.table_name = '{tableName}'
+                    ORDER BY c.ordinal_position",
+                "sqlserver" => $@"
+                    SELECT c.COLUMN_NAME,
+                           c.DATA_TYPE + CASE WHEN c.CHARACTER_MAXIMUM_LENGTH = -1 THEN '(max)'
+                                              ELSE ISNULL('(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS VARCHAR) + ')', '') END,
+                           CASE WHEN c.IS_NULLABLE = 'YES' THEN 1 ELSE 0 END,
+                           CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END,
+                           CASE WHEN COLUMNPROPERTY(OBJECT_ID('{tableName}'), c.COLUMN_NAME, 'IsIdentity') = 1 THEN 1 ELSE 0 END,
+                           c.COLUMN_DEFAULT
+                    FROM INFORMATION_SCHEMA.COLUMNS c
+                    LEFT JOIN (
+                        SELECT ku.COLUMN_NAME
+                        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                        JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
+                            ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
+                        WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                        AND tc.TABLE_NAME = '{tableName}'
+                    ) pk ON c.COLUMN_NAME = pk.COLUMN_NAME
+                    WHERE c.TABLE_NAME = '{tableName}'
+                    ORDER BY c.ORDINAL_POSITION",
+                "oracle" => $@"
+                    SELECT cols.column_name,
+                           cols.data_type || NVL2(cols.data_length, '(' || cols.data_length || ')', ''),
+                           CASE WHEN cols.nullable = 'Y' THEN 1 ELSE 0 END,
+                           CASE WHEN cons.constraint_type = 'P' THEN 1 ELSE 0 END,
+                           CASE WHEN cols.data_default IS NOT NULL AND UPPER(cols.data_default) LIKE '%NEXTVAL%' THEN 1 ELSE 0 END,
+                           cols.data_default
+                    FROM all_tab_columns cols
+                    LEFT JOIN (
+                        SELECT cc.column_name, c.constraint_type
+                        FROM all_constraints c
+                        JOIN all_cons_columns cc ON c.constraint_name = cc.constraint_name
+                        WHERE c.constraint_type = 'P'
+                        AND c.table_name = UPPER('{tableName}')
+                    ) cons ON cols.column_name = cons.column_name
+                    WHERE cols.table_name = UPPER('{tableName}')
+                    ORDER BY cols.column_id",
+                _ => throw new NotSupportedException($"Database type {dbType} is not supported")
+            };
+        }
+
+        private static readonly HashSet<string> SqlFunctionKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME",
+            "LOCALTIME", "LOCALTIMESTAMP",
+            "SYSDATE", "SYSTIMESTAMP", "UTC_TIMESTAMP", "UTC_DATE", "UTC_TIME",
+            "UUID", "GETDATE", "GETUTCDATE", "SYS_GUID",
+            "CURDATE", "CURTIME", "NOW", "USER", "SYSTEM_USER", "SESSION_USER"
+        };
+
+        private static string FormatDefaultValue(string defaultValue, string dbType)
+        {
+            var s = defaultValue.Trim();
+            if (string.Equals(s, "NULL", StringComparison.OrdinalIgnoreCase))
+            {
+                return "NULL";
+            }
+            if (double.TryParse(s, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _))
+            {
+                return s;
+            }
+            // 函数/表达式（含括号、类型转换 ::、或已是带引号的字面量）不额外加引号
+            if (s.Contains("(") || s.Contains("::") || s.Contains("'"))
+            {
+                return s;
+            }
+
+            var upper = s.ToUpperInvariant();
+            // 无括号的 SQL 函数/关键字（如 CURRENT_TIMESTAMP、SYSDATE）不可加引号，否则会被当成字符串字面量导致无效默认值（#1067）
+            if (SqlFunctionKeywords.Contains(upper) || SqlFunctionKeywords.Any(k => upper.StartsWith(k + " ")))
+            {
+                return s;
+            }
+            // Oracle/PostgreSQL 的序列默认值（如 seq.nextval / schema.seq.nextval）
+            if (upper.Contains("NEXTVAL"))
+            {
+                return s;
+            }
+
+            return $"'{s.Replace("'", "''")}'";
         }
 
         public async Task AddColumnAsync(Connection connection, string tableName, ColumnDefinition column, CancellationToken cancellationToken = default)
