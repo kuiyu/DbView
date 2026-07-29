@@ -27,6 +27,19 @@ builder.Services.AddHostedService<BackupSchedulerService>();
 
 var app = builder.Build();
 
+// 在所有 app.Use... 之前添加
+app.Use(async (context, next) =>
+{
+    // 拦截所有调试扫描路径，返回 404
+    if (context.Request.Path.StartsWithSegments("/debug/pprof") ||
+        context.Request.Path.StartsWithSegments("/debug") ||
+        context.Request.Path.StartsWithSegments("/pprof"))
+    {
+        context.Response.StatusCode = 404;
+        return;
+    }
+    await next();
+});
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
