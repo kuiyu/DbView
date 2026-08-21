@@ -9,7 +9,8 @@
     </div>
     <div class="editor-container">
       <codemirror
-        v-model="sqlText"
+        :model-value="props.sqlText || ''"
+        @update:model-value="onSqlChange"
         :extensions="extensions"
         :style="{ height: '100%' }"
       />
@@ -24,26 +25,30 @@ import { sql as sqlLang } from '@codemirror/lang-sql'
 import { oneDark } from '@codemirror/theme-one-dark'
 
 const props = defineProps<{
-  initialSql?: string
+  sqlText?: string
   tableName?: string
 }>()
 
 const emit = defineEmits<{
+  (e: 'update:sqlText', value: string): void
   (e: 'execute', value: string): void
   (e: 'export'): void
 }>()
 
-const sqlText = ref(props.initialSql || '')
 const rowCount = ref(0)
+
+const onSqlChange = (value: string) => {
+  emit('update:sqlText', value)
+}
 
 const extensions = computed(() => [sqlLang(), oneDark])
 
 const executeSql = () => {
-  emit('execute', sqlText.value)
+  emit('execute', props.sqlText || '')
 }
 
 const formatSql = () => {
-  const sql = (sqlText.value || '').trim()
+  const sql = (props.sqlText || '').trim()
   if (!sql) return
 
   // 采用主要子句关键字（不区分大小写）在前换行并转大写，形成基础格式化
@@ -68,7 +73,7 @@ const formatSql = () => {
   // AND / OR 独立成行并缩进
   formatted = formatted.replace(/\s+(AND|OR)\b/gi, '\n    $1')
 
-  sqlText.value = formatted
+  emit('update:sqlText', formatted)
 }
 
 const exportResults = () => {

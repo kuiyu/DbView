@@ -16,6 +16,10 @@ namespace DbView.Infrastructure.Entities
 
         public int MaxBackups { get; set; } = 10;
 
+        public string ScheduleMode { get; set; } = "interval";
+
+        public string? BackupTime { get; set; }
+
         public DateTime? LastBackupTime { get; set; }
 
         [Column(CanUpdate = false)]

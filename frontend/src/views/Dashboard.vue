@@ -56,10 +56,21 @@
                 </div>
                 <div v-if="backupConfig.enabled" class="backup-config-body">
                   <div class="config-row">
+                    <span class="config-label">备份方式</span>
+                    <t-radio-group v-model="backupConfig.scheduleMode" size="small" @change="onBackupConfigChange">
+                      <t-radio-button value="interval">按间隔</t-radio-button>
+                      <t-radio-button value="daily">指定时间</t-radio-button>
+                    </t-radio-group>
+                  </div>
+                  <div class="config-row" v-if="backupConfig.scheduleMode === 'interval'">
                     <span class="config-label">备份间隔</span>
                     <t-input-number v-model="backupConfig.intervalHours" :min="1" :max="720" :step="1" theme="normal" size="small" @change="onBackupConfigChange">
                       <template #suffix>小时</template>
                     </t-input-number>
+                  </div>
+                  <div class="config-row" v-else>
+                    <span class="config-label">备份时间</span>
+                    <t-time-picker v-model="backupConfig.backupTime" format="HH:mm" size="small" clearable @change="onBackupConfigChange" />
                   </div>
                   <div class="config-row">
                     <span class="config-label">保留份数</span>
@@ -97,8 +108,10 @@
         <div v-else-if="activeTab === 'sql'" class="sql-panel">
           <div class="sql-editor-slot">
             <sql-editor
-              :initial-sql="`SELECT * FROM ${currentTable}`"
+              :key="sqlEditorKey"
+              :sql-text="sqlEditorContent[currentTable] || ''"
               :table-name="currentTable"
+              @update:sql-text="(val: string) => { sqlEditorContent[currentTable] = val }"
               @execute="onExecuteSql"
               @export="onExportResult"
             />
@@ -166,9 +179,12 @@ const tables = ref<Table[]>([])
 const searchKeyword = ref('')
 const loadingTables = ref(false)
 const expandedConnections = ref<number[]>([])
-const backupConfig = ref({ enabled: false, intervalHours: 24, maxBackups: 10, lastBackupTime: null as string | null })
+const backupConfig = ref({ enabled: false, intervalHours: 24, maxBackups: 10, scheduleMode: 'interval', backupTime: null as string | null, lastBackupTime: null as string | null })
 const activeTab = ref<'data' | 'sql'>('data')
 const sqlResult = ref<any>(null)
+// 用户在各表中输入的 SQL 文本，按表名缓存，切换 Tab 不会重置
+const sqlEditorContent = ref<Record<string, string>>({})
+const sqlEditorKey = ref(0)
 
 const menuOptions = [
   { content: '备份', value: 'backup' },
@@ -261,10 +277,12 @@ const loadBackupConfig = async () => {
       enabled: config.enabled || false,
       intervalHours: config.intervalHours || 24,
       maxBackups: config.maxBackups || 10,
+      scheduleMode: config.scheduleMode || 'interval',
+      backupTime: config.backupTime || null,
       lastBackupTime: config.lastBackupTime || null
     }
   } catch (error) {
-    backupConfig.value = { enabled: false, intervalHours: 24, maxBackups: 10, lastBackupTime: null }
+    backupConfig.value = { enabled: false, intervalHours: 24, maxBackups: 10, scheduleMode: 'interval', backupTime: null, lastBackupTime: null }
   }
 }
 
@@ -278,7 +296,9 @@ const onBackupConfigChange = () => {
       await backupApi.updateBackupConfig(currentConnection.value.id, {
         enabled: backupConfig.value.enabled,
         intervalHours: backupConfig.value.intervalHours,
-        maxBackups: backupConfig.value.maxBackups
+        maxBackups: backupConfig.value.maxBackups,
+        scheduleMode: backupConfig.value.scheduleMode,
+        backupTime: backupConfig.value.scheduleMode === 'daily' ? backupConfig.value.backupTime : null
       })
       MessagePlugin.success('备份配置已保存')
     } catch (error) {
@@ -333,7 +353,14 @@ const handleMenu = async (data: any, connection: any) => {
 }
 
 const onTableSelectByName = (tableName: string) => {
+  if (currentTable.value === tableName) return
   currentTable.value = tableName
+  // 切换到新表时，若无已保存的 SQL 则填充默认查询；已输入的 SQL 保持不变
+  if (!(tableName in sqlEditorContent.value)) {
+    sqlEditorContent.value[tableName] = `SELECT * FROM ${tableName}`
+  }
+  // 切换表后强制重建编辑器，使其读取对应表的缓存内容
+  sqlEditorKey.value++
 }
 
 const refreshTables = () => {

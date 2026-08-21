@@ -30,6 +30,28 @@ namespace DbView.Infrastructure.Services
             return tables;
         }
 
+        /// <summary>
+        /// 将列值安全地读取为 bool。部分驱动（如 Microsoft.Data.Sqlite 的 PRAGMA 返回的
+        /// notnull/pk 是 integer 类型）对 GetBoolean() 直接抛
+        /// "Reading as 'System.Boolean' is not supported for fields having DataTypeName 'integer'"。
+        /// 这里统一从原始值（int/long/string/byte 等）做真值判断，跨数据库通用。
+        /// </summary>
+        private static bool ReadBool(DbDataReader reader, int ordinal)
+        {
+            if (reader.IsDBNull(ordinal))
+                return false;
+
+            var value = reader.GetValue(ordinal);
+            return value switch
+            {
+                bool b => b,
+                sbyte or byte or short or ushort or int or uint or long or ulong => Convert.ToInt64(value) != 0,
+                float or double or decimal => Convert.ToDouble(value) != 0,
+                string s => !string.IsNullOrWhiteSpace(s) && s != "0" && s.ToLowerInvariant() != "false",
+                _ => Convert.ToBoolean(value)
+            };
+        }
+
         public async Task<IReadOnlyList<ColumnInfo>> GetTableColumnsAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
         {
             var columns = new List<ColumnInfo>();
@@ -47,9 +69,9 @@ namespace DbView.Infrastructure.Services
                 {
                     ColumnName = reader.GetString(0),
                     DataType = reader.GetString(1),
-                    IsNullable = reader.GetBoolean(2),
-                    IsPrimaryKey = reader.GetBoolean(3),
-                    IsAutoIncrement = reader.GetBoolean(4),
+                    IsNullable = ReadBool(reader, 2),
+                    IsPrimaryKey = ReadBool(reader, 3),
+                    IsAutoIncrement = ReadBool(reader, 4),
                     DefaultValue = reader.IsDBNull(5) ? string.Empty : reader.GetString(5),
                     Comment = reader.IsDBNull(6) ? string.Empty : reader.GetString(6)
                 });
@@ -84,21 +106,7 @@ namespace DbView.Infrastructure.Services
                 var row = new object[reader.FieldCount];
                 for (int i = 0; i < reader.FieldCount; i++)
                 {
-                    if (reader.IsDBNull(i))
-                    {
-                        row[i] = null;
-                    }
-                    else
-                    {
-                        try
-                        {
-                            row[i] = reader.GetValue(i);
-                        }
-                        catch
-                        {
-                            row[i] = reader.GetFieldValue<string>(i);
-                        }
-                    }
+                    row[i] = ReadCellValue(reader, i);
                 }
                 items.Add(row);
             }
@@ -137,21 +145,7 @@ namespace DbView.Infrastructure.Services
                 var row = new object[reader.FieldCount];
                 for (int i = 0; i < reader.FieldCount; i++)
                 {
-                    if (reader.IsDBNull(i))
-                    {
-                        row[i] = null;
-                    }
-                    else
-                    {
-                        try
-                        {
-                            row[i] = reader.GetValue(i);
-                        }
-                        catch
-                        {
-                            row[i] = reader.GetFieldValue<string>(i);
-                        }
-                    }
+                    row[i] = ReadCellValue(reader, i);
                 }
                 items.Add(row);
             }
@@ -597,33 +591,39 @@ namespace DbView.Infrastructure.Services
                 var row = new object[reader.FieldCount];
                 for (int i = 0; i < reader.FieldCount; i++)
                 {
-                    if (reader.IsDBNull(i))
-                    {
-                        row[i] = null;
-                    }
-                    else
-                    {
-                        try
-                        {
-                            row[i] = reader.GetValue(i);
-                        }
-                        catch
-                        {
-                            try
-                            {
-                                row[i] = reader.GetFieldValue<string>(i);
-                            }
-                            catch
-                            {
-                                row[i] = reader[i]?.ToString();
-                            }
-                        }
-                    }
+                    row[i] = ReadCellValue(reader, i);
                 }
                 items.Add(row);
             }
 
             return items;
+        }
+
+        /// <summary>
+        /// 将读取器当前行第 i 列的值安全地取出为 object：优先 GetValue，
+        /// 失败时回退到 GetFieldValue&lt;string&gt;，再失败时用 ToString()。
+        /// 避免个别驱动（如 Microsoft.Data.Sqlite 对 integer 列调用 GetFieldValue&lt;string&gt; 抛错）导致整行失败。
+        /// </summary>
+        private static object ReadCellValue(DbDataReader reader, int i)
+        {
+            if (reader.IsDBNull(i))
+                return null!;
+
+            try
+            {
+                return reader.GetValue(i);
+            }
+            catch
+            {
+                try
+                {
+                    return reader.GetFieldValue<string>(i);
+                }
+                catch
+                {
+                    return reader[i]?.ToString();
+                }
+            }
         }
 
         private string GetColumnsNameQuery(string dbType, string tableName, string databaseName)
@@ -708,9 +708,9 @@ namespace DbView.Infrastructure.Services
             {
                 var colName = reader.GetString(0);
                 var colType = reader.GetString(1);
-                var isNullable = reader.GetBoolean(2);
-                var isPrimaryKey = reader.GetBoolean(3);
-                var isAutoIncrement = reader.GetBoolean(4);
+                var isNullable = ReadBool(reader, 2);
+                var isPrimaryKey = ReadBool(reader, 3);
+                var isAutoIncrement = ReadBool(reader, 4);
                 var defaultValue = reader.IsDBNull(5) ? null : reader.GetString(5);
 
                 var qc = GetQuotedColumnName(connection.DbType, colName);

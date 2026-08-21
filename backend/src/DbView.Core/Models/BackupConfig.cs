@@ -9,6 +9,8 @@ namespace DbView.Core.Models
         public bool Enabled { get; set; }
         public int IntervalHours { get; set; } = 24;
         public int MaxBackups { get; set; } = 10;
+        public string ScheduleMode { get; set; } = "interval";
+        public string? BackupTime { get; set; }
         public DateTime? LastBackupTime { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

@@ -44,6 +44,8 @@ namespace DbView.WebApi.Features.Backup
                     Enabled = r.Enabled,
                     IntervalHours = r.IntervalHours,
                     MaxBackups = r.MaxBackups,
+                    ScheduleMode = r.ScheduleMode,
+                    BackupTime = r.BackupTime,
                     CreatedAt = DateTime.Now,
                     UpdatedAt = DateTime.Now
                 };
@@ -54,6 +56,8 @@ namespace DbView.WebApi.Features.Backup
                 existing.Enabled = r.Enabled;
                 existing.IntervalHours = r.IntervalHours;
                 existing.MaxBackups = r.MaxBackups;
+                existing.ScheduleMode = r.ScheduleMode;
+                existing.BackupTime = r.BackupTime;
                 existing.UpdatedAt = DateTime.Now;
                 await _backupConfigRepository.UpdateAsync(existing, c);
                 config = existing;
@@ -66,6 +70,8 @@ namespace DbView.WebApi.Features.Backup
                 Enabled = config.Enabled,
                 IntervalHours = config.IntervalHours,
                 MaxBackups = config.MaxBackups,
+                ScheduleMode = config.ScheduleMode,
+                BackupTime = config.BackupTime,
                 LastBackupTime = config.LastBackupTime
             };
 

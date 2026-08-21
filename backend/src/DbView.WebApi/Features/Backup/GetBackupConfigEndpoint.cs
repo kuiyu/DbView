@@ -40,7 +40,8 @@ namespace DbView.WebApi.Features.Backup
                     ConnectionId = connectionId,
                     Enabled = false,
                     IntervalHours = 24,
-                    MaxBackups = 10
+                    MaxBackups = 10,
+                    ScheduleMode = "interval"
                 }
                 : new BackupConfigDto
                 {
@@ -49,6 +50,8 @@ namespace DbView.WebApi.Features.Backup
                     Enabled = config.Enabled,
                     IntervalHours = config.IntervalHours,
                     MaxBackups = config.MaxBackups,
+                    ScheduleMode = config.ScheduleMode,
+                    BackupTime = config.BackupTime,
                     LastBackupTime = config.LastBackupTime
                 };
 
