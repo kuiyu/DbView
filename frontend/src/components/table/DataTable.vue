@@ -22,6 +22,8 @@
         :bordered="true"
         :select-all="true"
         :loading="loading"
+        table-layout="fixed"
+        :resizable="true"
         @select-change="onSelectChange"
         @page-change="onPageChange"
         @select-all-change="onSelectAllChange"
@@ -80,7 +82,13 @@ const columnTypes = ref<Record<string, string>>({})
 const primaryKeys = ref<Set<string>>(new Set())
 const selectedRowKeys = ref<number[]>([])
 const selectedRows = ref<any[]>([])
-const pagination = ref({ current: 1, pageSize: 20, total: 0 })
+const pagination = ref({
+  current: 1,
+  pageSize: 20,
+  total: 0,
+  showPageSize: true,
+  pageSizeOptions: [20, 50, 100, 200, 500]
+})
 const loading = ref(false)
 const editDialog = ref<InstanceType<typeof EditDialog>>()
 const importDialog = ref<InstanceType<typeof ImportDialog>>()
@@ -137,7 +145,8 @@ const tableColumns = computed(() => {
     title: col,
     colKey: col,
     width: col.toLowerCase() === 'id' ? 120 : 150,
-    cell: 'default'
+    cell: 'default',
+    resize: { minWidth: 80, maxWidth: 1000 }
   }))
   return [
     { colKey: 'row-select', type: 'multiple', width: 50 },
@@ -325,8 +334,9 @@ const onSelectAllChange = (selected: boolean, options: any[]) => {
 }
 
 const onPageChange = (pageInfo: { current: number; previous: number | undefined; pageSize: number }) => {
-  console.log('onPageChange:', pageInfo)
-  pagination.value.current = pageInfo.current
+  const pageSizeChanged = pagination.value.pageSize !== pageInfo.pageSize
+  // 切换每页条数后回到第一页，避免页码超出新分页范围导致空数据
+  pagination.value.current = pageSizeChanged ? 1 : pageInfo.current
   pagination.value.pageSize = pageInfo.pageSize
   selectedRowKeys.value = []
   selectedRows.value = []
