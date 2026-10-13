@@ -34,7 +34,7 @@ namespace DbView.WebApi.Features.Backup
         public long ConnectionId { get; set; }
         public bool Enabled { get; set; }
         public int IntervalHours { get; set; }
-        public int MaxBackups { get; set; }
+        public int RetentionDays { get; set; }
         public string ScheduleMode { get; set; } = "interval";
         public string? BackupTime { get; set; }
         public DateTime? LastBackupTime { get; set; }
@@ -44,7 +44,7 @@ namespace DbView.WebApi.Features.Backup
     {
         public bool Enabled { get; set; }
         public int IntervalHours { get; set; }
-        public int MaxBackups { get; set; }
+        public int RetentionDays { get; set; }
         public string ScheduleMode { get; set; } = "interval";
         public string? BackupTime { get; set; }
     }

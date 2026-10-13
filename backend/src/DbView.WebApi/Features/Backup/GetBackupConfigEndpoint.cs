@@ -40,7 +40,7 @@ namespace DbView.WebApi.Features.Backup
                     ConnectionId = connectionId,
                     Enabled = false,
                     IntervalHours = 24,
-                    MaxBackups = 10,
+                    RetentionDays = BackupSchedulerService.DefaultRetentionDays,
                     ScheduleMode = "interval"
                 }
                 : new BackupConfigDto
@@ -49,7 +49,7 @@ namespace DbView.WebApi.Features.Backup
                     ConnectionId = config.ConnectionId,
                     Enabled = config.Enabled,
                     IntervalHours = config.IntervalHours,
-                    MaxBackups = config.MaxBackups,
+                    RetentionDays = BackupSchedulerService.NormalizeRetentionDays(config.RetentionDays),
                     ScheduleMode = config.ScheduleMode,
                     BackupTime = config.BackupTime,
                     LastBackupTime = config.LastBackupTime

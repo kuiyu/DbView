@@ -73,11 +73,12 @@
                     <t-time-picker v-model="backupConfig.backupTime" format="HH:mm" size="small" clearable @change="onBackupConfigChange" />
                   </div>
                   <div class="config-row">
-                    <span class="config-label">保留份数</span>
-                    <t-input-number v-model="backupConfig.maxBackups" :min="1" :max="100" :step="1" theme="normal" size="small" @change="onBackupConfigChange">
-                      <template #suffix>份</template>
+                    <span class="config-label">保留天数</span>
+                    <t-input-number v-model="backupConfig.retentionDays" :min="1" :max="365" :step="1" theme="normal" size="small" @change="onBackupConfigChange">
+                      <template #suffix>天</template>
                     </t-input-number>
                   </div>
+                  <div class="config-tip">仅保留最近 {{ backupConfig.retentionDays }} 天的自动备份，更早的自动备份会被自动删除（手动备份不受影响）</div>
                   <div v-if="backupConfig.lastBackupTime" class="config-row">
                     <span class="config-label">上次备份</span>
                     <span class="config-value">{{ formatTime(backupConfig.lastBackupTime) }}</span>
@@ -118,18 +119,26 @@
           </div>
           <div class="sql-result" v-if="sqlResult">
             <div class="sql-result-header" :class="{ error: sqlResult.success === false }">
-              {{ sqlResult.message }}
+              {{ sqlResult.detail || sqlResult.message }}
             </div>
-            <t-table
-              v-if="sqlResultColumns.length"
-              :data="sqlResultRows"
-              :columns="sqlResultColumns"
-              size="small"
-              row-key="__idx"
-              max-height="320"
-              stripe
-            />
-            <div v-else class="sql-result-empty">无返回数据</div>
+            <div v-if="sqlResult.success === false && sqlResult.sql" class="sql-result-sql">
+              SQL: {{ sqlResult.sql }}
+            </div>
+            <div v-if="sqlResult.success === false && sqlErrorTip" class="sql-result-tip">
+              提示：{{ sqlErrorTip }}
+            </div>
+            <template v-if="sqlResult.success !== false">
+              <t-table
+                v-if="sqlResultColumns.length"
+                :data="sqlResultRows"
+                :columns="sqlResultColumns"
+                size="small"
+                row-key="__idx"
+                max-height="320"
+                stripe
+              />
+              <div v-else class="sql-result-empty">无返回数据</div>
+            </template>
           </div>
         </div>
       </div>
@@ -179,7 +188,7 @@ const tables = ref<Table[]>([])
 const searchKeyword = ref('')
 const loadingTables = ref(false)
 const expandedConnections = ref<number[]>([])
-const backupConfig = ref({ enabled: false, intervalHours: 24, maxBackups: 10, scheduleMode: 'interval', backupTime: null as string | null, lastBackupTime: null as string | null })
+const backupConfig = ref({ enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null as string | null, lastBackupTime: null as string | null })
 const activeTab = ref<'data' | 'sql'>('data')
 const sqlResult = ref<any>(null)
 // 用户在各表中输入的 SQL 文本，按表名缓存，切换 Tab 不会重置
@@ -276,13 +285,13 @@ const loadBackupConfig = async () => {
     backupConfig.value = {
       enabled: config.enabled || false,
       intervalHours: config.intervalHours || 24,
-      maxBackups: config.maxBackups || 10,
+      retentionDays: config.retentionDays || 7,
       scheduleMode: config.scheduleMode || 'interval',
       backupTime: config.backupTime || null,
       lastBackupTime: config.lastBackupTime || null
     }
   } catch (error) {
-    backupConfig.value = { enabled: false, intervalHours: 24, maxBackups: 10, scheduleMode: 'interval', backupTime: null, lastBackupTime: null }
+    backupConfig.value = { enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null, lastBackupTime: null }
   }
 }
 
@@ -296,7 +305,7 @@ const onBackupConfigChange = () => {
       await backupApi.updateBackupConfig(currentConnection.value.id, {
         enabled: backupConfig.value.enabled,
         intervalHours: backupConfig.value.intervalHours,
-        maxBackups: backupConfig.value.maxBackups,
+        retentionDays: backupConfig.value.retentionDays,
         scheduleMode: backupConfig.value.scheduleMode,
         backupTime: backupConfig.value.scheduleMode === 'daily' ? backupConfig.value.backupTime : null
       })
@@ -378,8 +387,18 @@ const onExecuteSql = async (sql: string) => {
     const result: any = await sqlApi.executeSql(currentConnection.value.id, sql)
     sqlResult.value = result.result || result
     MessagePlugin.success('SQL执行成功')
-  } catch (error) {
-    MessagePlugin.error('SQL执行失败')
+  } catch (error: any) {
+    // 优先取后端返回的报错原因（detail 为数据库原始错误，含 SQLSTATE / POSITION），
+    // 再回退到 message / msg / 网络异常信息
+    const errMsg =
+      error?.response?.data?.detail ||
+      error?.response?.data?.message ||
+      error?.response?.data?.msg ||
+      error?.message ||
+      'SQL执行失败'
+    // 把报错原因写回结果区，以红色高亮展示，方便直接看到失败原因
+    sqlResult.value = { success: false, message: errMsg }
+    MessagePlugin.error(errMsg)
     console.error(error)
   }
 }
@@ -433,6 +452,23 @@ const sqlResultColumns = computed(() => {
     minWidth: 90,
     width: 160
   }))
+})
+
+// 根据后端返回的错误详情，给出常见原因的排查提示，避免用户误以为程序有 bug
+const sqlErrorTip = computed(() => {
+  const sr = sqlResult.value
+  if (!sr || sr.success !== false) return ''
+  const detail = (sr.detail || sr.message || '').toLowerCase()
+  if (detail.includes('does not exist') || detail.includes('42703') || detail.includes('42704') || detail.includes('undefined_table')) {
+    return '常见原因：表名或列名是数据库保留字（如 user、order 等）或大小写/拼写不一致。请用双引号包裹标识符，例如 FROM "user" 或 "UserName"。'
+  }
+  if (detail.includes('syntax') || detail.includes('42601')) {
+    return 'SQL 语法错误，请检查语句；引用保留字或特殊表名时请用双引号包裹标识符。'
+  }
+  if (detail.includes('permission') || detail.includes('42501') || detail.includes('denied')) {
+    return '权限不足，请确认当前数据库账号对该表有相应操作权限。'
+  }
+  return '请检查 SQL 语句以及表名/列名是否存在、是否位于当前连接的数据库中。'
 })
 
 const onDeleteTable = async (tableName: string) => {
@@ -694,6 +730,24 @@ onMounted(() => {
   color: #e34d59;
 }
 
+.sql-result-sql {
+  font-size: 12px;
+  color: #d0a000;
+  word-break: break-all;
+  font-family: monospace;
+  margin-bottom: 8px;
+}
+
+.sql-result-tip {
+  font-size: 12px;
+  color: #888;
+  line-height: 1.6;
+  padding: 6px 8px;
+  background: #f5f5f5;
+  border-left: 3px solid #d0a000;
+  border-radius: 2px;
+}
+
 .sql-result-empty {
   color: #999;
   font-size: 13px;
@@ -739,5 +793,11 @@ onMounted(() => {
 .config-value {
   font-size: 12px;
   color: #333;
+}
+
+.config-tip {
+  font-size: 11px;
+  color: #aaa;
+  line-height: 1.5;
 }
 </style>

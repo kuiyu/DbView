@@ -109,7 +109,10 @@ namespace DbView.WebApi.Features.Sql.Execute
                 await HttpContext.Response.SendAsync(new
                 {
                     success = false,
-                    message = $"SQL execution failed: {ex.Message}"
+                    // 面向用户的简洁提示，detail 才是数据库原始错误（含 SQLSTATE / POSITION）
+                    message = "SQL 执行失败",
+                    detail = ex.Message,
+                    sql = r.Sql
                 }, 400, cancellation: c);
             }
         }

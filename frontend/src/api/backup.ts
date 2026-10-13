@@ -34,7 +34,7 @@ export const backupApi = {
   },
 
   // 更新自动备份配置
-  updateBackupConfig(connectionId: number, config: { enabled: boolean; intervalHours: number; maxBackups: number; scheduleMode?: string; backupTime?: string | null }) {
+  updateBackupConfig(connectionId: number, config: { enabled: boolean; intervalHours: number; retentionDays: number; scheduleMode?: string; backupTime?: string | null }) {
     return request.put(`/connections/${connectionId}/backup-config`, config)
   }
 }

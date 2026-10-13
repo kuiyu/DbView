@@ -43,7 +43,7 @@ namespace DbView.WebApi.Features.Backup
                     ConnectionId = connectionId,
                     Enabled = r.Enabled,
                     IntervalHours = r.IntervalHours,
-                    MaxBackups = r.MaxBackups,
+                    RetentionDays = BackupSchedulerService.NormalizeRetentionDays(r.RetentionDays),
                     ScheduleMode = r.ScheduleMode,
                     BackupTime = r.BackupTime,
                     CreatedAt = DateTime.Now,
@@ -55,7 +55,7 @@ namespace DbView.WebApi.Features.Backup
             {
                 existing.Enabled = r.Enabled;
                 existing.IntervalHours = r.IntervalHours;
-                existing.MaxBackups = r.MaxBackups;
+                existing.RetentionDays = BackupSchedulerService.NormalizeRetentionDays(r.RetentionDays);
                 existing.ScheduleMode = r.ScheduleMode;
                 existing.BackupTime = r.BackupTime;
                 existing.UpdatedAt = DateTime.Now;
@@ -69,7 +69,7 @@ namespace DbView.WebApi.Features.Backup
                 ConnectionId = config.ConnectionId,
                 Enabled = config.Enabled,
                 IntervalHours = config.IntervalHours,
-                MaxBackups = config.MaxBackups,
+                RetentionDays = config.RetentionDays,
                 ScheduleMode = config.ScheduleMode,
                 BackupTime = config.BackupTime,
                 LastBackupTime = config.LastBackupTime

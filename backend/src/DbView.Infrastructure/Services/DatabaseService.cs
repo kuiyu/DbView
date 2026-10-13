@@ -196,20 +196,28 @@ namespace DbView.Infrastructure.Services
             return $" WHERE {string.Join(" AND ", conditions)}";
         }
 
-        private string FormatFilterValue(string value, string dbType)
+        /// <summary>
+        /// 将过滤值格式化为 SQL 字面量。
+        /// 统一按「字符串字面量」输出：SQL 字符串字面量属于 unknown 类型，各数据库都会按列的实际类型
+        /// 做隐式转换（varchar 按文本比较、int/numeric/date 等按对应类型转换），
+        /// 因此既能匹配 "00003585" 这类纯数字文本，也不会像数值字面量那样在 PostgreSQL 触发
+        /// "operator does not exist: character varying = integer"。
+        /// </summary>
+        private static string FormatFilterValue(string? value, string dbType)
         {
             if (string.IsNullOrEmpty(value))
                 return "NULL";
             if (value.Equals("NULL", StringComparison.OrdinalIgnoreCase))
                 return "NULL";
-            if (int.TryParse(value, out _) || long.TryParse(value, out _) || double.TryParse(value, out _) || decimal.TryParse(value, out _))
-                return value;
+
+            var type = (dbType ?? string.Empty).ToLowerInvariant();
+
+            // 布尔字面量：SQL Server / Oracle 不支持 TRUE / FALSE 关键字
             if (value.Equals("true", StringComparison.OrdinalIgnoreCase))
-                return dbType.ToLower() == "oracle" ? "1" : "TRUE";
+                return type == "oracle" || type == "sqlserver" ? "1" : "TRUE";
             if (value.Equals("false", StringComparison.OrdinalIgnoreCase))
-                return dbType.ToLower() == "oracle" ? "0" : "FALSE";
-            if (value.Contains('%') || value.Contains('_'))
-                return $"'{value.Replace("'", "''")}'";
+                return type == "oracle" || type == "sqlserver" ? "0" : "FALSE";
+
             return $"'{value.Replace("'", "''")}'";
         }
 
