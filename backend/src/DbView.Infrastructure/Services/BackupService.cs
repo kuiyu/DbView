@@ -22,8 +22,9 @@ namespace DbView.Infrastructure.Services
             var fileName = $"{backupName}.sql";
             var filePath = Path.Combine(backupDir, fileName);
 
-            var sql = await GenerateBackupSql(connection, cancellationToken);
-            await File.WriteAllTextAsync(filePath, sql, cancellationToken);
+            // 流式写入：边查边写文件，避免整库 SQL 堆积在内存里导致大库 OOM
+            await using var writer = new StreamWriter(filePath, append: false, Encoding.UTF8, bufferSize: 65536);
+            await GenerateBackupSqlAsync(writer, connection, cancellationToken);
 
             var fileInfo = new FileInfo(filePath);
             return new BackupFileInfo
@@ -35,39 +36,38 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        private async Task<string> GenerateBackupSql(Connection connection, CancellationToken cancellationToken)
+        private async Task GenerateBackupSqlAsync(StreamWriter writer, Connection connection, CancellationToken cancellationToken)
         {
             var tables = await _databaseService.GetTablesAsync(connection, cancellationToken);
-            var sb = new StringBuilder();
 
             var dbType = connection.DbType.ToLower();
             var isMySql = dbType == "mysql";
             var isSqlServer = dbType == "sqlserver";
             var isPostgreSql = dbType == "postgresql";
 
-            sb.AppendLine($"-- 数据库备份: {connection.DatabaseName}");
-            sb.AppendLine($"-- 备份时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"-- 数据库类型: {connection.DbType}");
-            sb.AppendLine("-- 自包含备份：先重建表结构再导入数据，可直接恢复到空库");
-            sb.AppendLine();
+            await writer.WriteLineAsync($"-- 数据库备份: {connection.DatabaseName}");
+            await writer.WriteLineAsync($"-- 备份时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            await writer.WriteLineAsync($"-- 数据库类型: {connection.DbType}");
+            await writer.WriteLineAsync("-- 自包含备份：先重建表结构再导入数据，可直接恢复到空库");
+            await writer.WriteLineAsync();
 
             // MySQL 恢复前关闭外键检查，避免 DROP/CREATE/INSERT 顺序受外键约束影响
             if (isMySql)
             {
-                sb.AppendLine("SET FOREIGN_KEY_CHECKS=0;");
-                sb.AppendLine();
+                await writer.WriteLineAsync("SET FOREIGN_KEY_CHECKS=0;");
+                await writer.WriteLineAsync();
             }
 
             foreach (var table in tables)
             {
-                sb.AppendLine($"-- 表: {table.TableName}");
+                await writer.WriteLineAsync($"-- 表: {table.TableName}");
 
                 // 先删除目标库中可能存在的同名表（表不存在时 IF EXISTS 不会报错；Oracle 不支持 IF EXISTS，由恢复端点容错）
-                sb.AppendLine(GetDropTableSql(dbType, table.TableName));
+                await writer.WriteLineAsync(GetDropTableSql(dbType, table.TableName));
 
                 // 生成建表语句（含完整类型、主键、自增、默认值），并取回自增列信息
                 var (createSql, autoColumns) = await _databaseService.GenerateCreateTableSqlAsync(connection, table.TableName, cancellationToken);
-                sb.AppendLine(createSql);
+                await writer.WriteLineAsync(createSql);
 
                 var quotedTable = GetQuotedTableName(dbType, table.TableName);
                 var hasAuto = autoColumns.Count > 0;
@@ -75,31 +75,31 @@ namespace DbView.Infrastructure.Services
                 // SQL Server 显式插入自增列值需先开启 IDENTITY_INSERT（整批在同一连接执行时生效）
                 if (hasAuto && isSqlServer)
                 {
-                    sb.AppendLine($"SET IDENTITY_INSERT {quotedTable} ON;");
+                    await writer.WriteLineAsync($"SET IDENTITY_INSERT {quotedTable} ON;");
                 }
 
                 var columns = await _databaseService.GetTableColumnNamesAsync(connection, table.TableName, cancellationToken);
-                var rows = await _databaseService.GetAllTableDataAsync(connection, table.TableName, cancellationToken);
 
-                if (columns.Count > 0 && rows.Count > 0)
+                if (columns.Count > 0)
                 {
                     var quotedColumns = columns.Select(col => GetQuotedColumnName(dbType, col));
                     var columnList = string.Join(", ", quotedColumns);
 
-                    foreach (var row in rows)
+                    // 流式读取数据，逐行写入 INSERT，内存占用与单表大小无关
+                    await foreach (var row in _databaseService.StreamTableDataAsync(connection, table.TableName, cancellationToken))
                     {
-                        var values = new List<string>();
+                        var values = new List<string>(row.Length);
                         for (int i = 0; i < row.Length; i++)
                         {
                             values.Add(FormatValue(row[i], dbType));
                         }
-                        sb.AppendLine($"INSERT INTO {quotedTable} ({columnList}) VALUES ({string.Join(", ", values)});");
+                        await writer.WriteLineAsync($"INSERT INTO {quotedTable} ({columnList}) VALUES ({string.Join(", ", values)});");
                     }
                 }
 
                 if (hasAuto && isSqlServer)
                 {
-                    sb.AppendLine($"SET IDENTITY_INSERT {quotedTable} OFF;");
+                    await writer.WriteLineAsync($"SET IDENTITY_INSERT {quotedTable} OFF;");
                 }
 
                 // PostgreSQL 恢复后重置序列当前值，避免后续插入因序列未前进而主键冲突
@@ -108,19 +108,17 @@ namespace DbView.Infrastructure.Services
                     foreach (var col in autoColumns)
                     {
                         var qc = GetQuotedColumnName(dbType, col);
-                        sb.AppendLine($"SELECT setval(pg_get_serial_sequence('{table.TableName}','{col}'), COALESCE((SELECT MAX({qc}) FROM {quotedTable}), 1));");
+                        await writer.WriteLineAsync($"SELECT setval(pg_get_serial_sequence('{table.TableName}','{col}'), COALESCE((SELECT MAX({qc}) FROM {quotedTable}), 1));");
                     }
                 }
 
-                sb.AppendLine();
+                await writer.WriteLineAsync();
             }
 
             if (isMySql)
             {
-                sb.AppendLine("SET FOREIGN_KEY_CHECKS=1;");
+                await writer.WriteLineAsync("SET FOREIGN_KEY_CHECKS=1;");
             }
-
-            return sb.ToString();
         }
 
         private string GetDropTableSql(string dbType, string tableName)

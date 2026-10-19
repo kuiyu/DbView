@@ -1,5 +1,6 @@
 using DbView.Core.Models;
 using System.Data.Common;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace DbView.Infrastructure.Services
@@ -575,10 +576,12 @@ namespace DbView.Infrastructure.Services
             return columns;
         }
 
-        public async Task<IReadOnlyList<object[]>> GetAllTableDataAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// 流式读取整张表的数据，逐行 yield 返回，避免一次性把所有行加载进内存导致大表 OOM。
+        /// 枚举期间会保持数据库连接与读取器打开，枚举结束（或提前 break / dispose）后自动释放。
+        /// </summary>
+        public async IAsyncEnumerable<object[]> StreamTableDataAsync(Connection connection, string tableName, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            var items = new List<object[]>();
-
             using var conn = CreateConnection(connection);
             await conn.OpenAsync(cancellationToken);
 
@@ -601,10 +604,8 @@ namespace DbView.Infrastructure.Services
                 {
                     row[i] = ReadCellValue(reader, i);
                 }
-                items.Add(row);
+                yield return row;
             }
-
-            return items;
         }
 
         /// <summary>
