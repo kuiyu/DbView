@@ -8,6 +8,7 @@
       </t-button>
       <t-button @click="onImport">导入</t-button>
       <t-button @click="onExport">导出</t-button>
+      <t-button v-if="vectorColumns.length" theme="warning" @click="onVectorSearch">向量检索</t-button>
       <t-button @click="onRefresh" :loading="loading">刷新</t-button>
     </div>
 
@@ -54,6 +55,7 @@
     <EditDialog ref="editDialog" @save="onEditSave" />
     <ImportDialog ref="importDialog" @import="onImportSave" />
     <ConfirmDialog ref="confirmDialog" />
+    <VectorSearchDialog ref="vectorSearchDialog" :connection-id="props.connectionId" :table-name="props.tableName" :vector-columns="vectorColumns" />
   </div>
 </template>
 
@@ -66,10 +68,12 @@ import EditDialog from './EditDialog.vue'
 import ImportDialog from './ImportDialog.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import FilterBar from './FilterBar.vue'
+import VectorSearchDialog from './VectorSearchDialog.vue'
 
 const props = defineProps<{
   connectionId: number,
-  tableName: string
+  tableName: string,
+  tableSchema?: string
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +97,15 @@ const loading = ref(false)
 const editDialog = ref<InstanceType<typeof EditDialog>>()
 const importDialog = ref<InstanceType<typeof ImportDialog>>()
 const confirmDialog = ref<InstanceType<typeof ConfirmDialog>>()
+const vectorSearchDialog = ref<InstanceType<typeof VectorSearchDialog>>()
+
+// 含向量类型的列（目前仅 PostgreSQL 的 vector 类型），用于显示“向量检索”入口
+const vectorColumns = computed(() =>
+  columnNames.value.filter((col) => {
+    const t = (columnTypes.value[col] || '').toLowerCase()
+    return t.includes('vector')
+  })
+)
 const activeFilters = ref<QueryFilter[]>([])
 const isFiltering = ref(false)
 
@@ -217,7 +230,7 @@ const loadData = async () => {
 
 const loadColumnInfo = async () => {
   try {
-    const result: any = await structureApi.getColumns(props.connectionId, props.tableName)
+    const result: any = await structureApi.getColumns(props.connectionId, props.tableName, props.tableSchema)
     const structure = Array.isArray(result) ? result : (result.result || [])
 
     if (structure && structure.length > 0) {
@@ -345,6 +358,10 @@ const onPageChange = (pageInfo: { current: number; previous: number | undefined;
 
 const onImport = () => {
   importDialog.value?.open()
+}
+
+const onVectorSearch = () => {
+  vectorSearchDialog.value?.open()
 }
 
 const onExport = () => {

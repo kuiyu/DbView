@@ -4,6 +4,11 @@ namespace DbView.WebApi.Features.Table.Structure
     {
         public long ConnectionId { get; set; }
         public string TableName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 表所在 schema（PostgreSQL 多 schema 场景必填，否则同名表会取到别的 schema 的列定义）。
+        /// </summary>
+        public string? Schema { get; set; }
     }
 
     public class ColumnDto

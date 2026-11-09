@@ -52,7 +52,9 @@ namespace DbView.WebApi.Features.Backup
                     RetentionDays = BackupSchedulerService.NormalizeRetentionDays(config.RetentionDays),
                     ScheduleMode = config.ScheduleMode,
                     BackupTime = config.BackupTime,
-                    LastBackupTime = config.LastBackupTime
+                    LastBackupTime = config.LastBackupTime,
+                    LastError = config.LastError,
+                    ConsecutiveFailures = config.ConsecutiveFailures
                 };
 
             await HttpContext.Response.SendAsync(new { config = dto }, cancellation: c);

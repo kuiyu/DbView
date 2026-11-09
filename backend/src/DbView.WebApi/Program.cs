@@ -2,6 +2,12 @@ using FastEndpoints;
 using FastEndpoints.Swagger;
 using System.Text.Json;
 using DbView.WebApi.Features.Backup;
+using Npgsql;
+using Pgvector.Npgsql;
+
+// 让 Npgsql 识别 PostgreSQL 的 vector（pgvector）类型，否则 SELECT 含向量列的表时读取会抛异常。
+// 注册为全局映射，对所有 Npgsql 连接（含 FreeSql 的 PG 连接）生效，不影响普通列。
+NpgsqlConnection.GlobalTypeMapper.UseVector();
 
 var builder = WebApplication.CreateBuilder(args);
 

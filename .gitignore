@@ -255,6 +255,9 @@ Generated_Code/
 # because we have git ;-)
 _UpgradeReport_Files/
 Backup*/
+# 上面的规则会误伤我们自己的功能目录（Windows 下忽略规则大小写不敏感）：
+# frontend/src/components/backup 是备份管理面板的源码目录，必须纳入版本管理。
+!frontend/src/components/backup/
 UpgradeLog*.XML
 UpgradeLog*.htm
 ServiceFabricBackup/

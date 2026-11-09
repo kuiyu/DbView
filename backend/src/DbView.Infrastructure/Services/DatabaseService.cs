@@ -7,27 +7,44 @@ namespace DbView.Infrastructure.Services
 {
     public class DatabaseService
     {
-        public async Task<IReadOnlyList<TableInfo>> GetTablesAsync(Connection connection, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<TableInfo>> GetTablesAsync(Connection connection, CancellationToken cancellationToken = default, BackupSession? session = null)
         {
             var tables = new List<TableInfo>();
-            
-            using var conn = CreateConnection(connection);
-            await conn.OpenAsync(cancellationToken);
-            
-            var command = conn.CreateCommand();
-            command.CommandText = GetTablesQuery(connection.DbType, connection.DatabaseName);
-            
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+
+            var owned = session == null;
+            var conn = session?.Db ?? CreateConnection(connection);
+            if (owned)
             {
-                tables.Add(new TableInfo
-                {
-                    TableName = reader.GetString(0),
-                    SchemaName = reader.IsDBNull(1) ? "public" : reader.GetString(1),
-                    Comment = reader.IsDBNull(2) ? string.Empty : reader.GetString(2)
-                });
+                await conn.OpenAsync(cancellationToken);
             }
-            
+
+            try
+            {
+                var command = session?.CreateCommand() ?? conn.CreateCommand();
+                command.CommandText = GetTablesQuery(connection.DbType, connection.DatabaseName);
+
+                using (command)
+                using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        tables.Add(new TableInfo
+                        {
+                            TableName = reader.GetString(0),
+                            SchemaName = reader.IsDBNull(1) ? "public" : reader.GetString(1),
+                            Comment = reader.IsDBNull(2) ? string.Empty : reader.GetString(2)
+                        });
+                    }
+                }
+            }
+            finally
+            {
+                if (owned)
+                {
+                    await conn.DisposeAsync();
+                }
+            }
+
             return tables;
         }
 
@@ -53,7 +70,7 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        public async Task<IReadOnlyList<ColumnInfo>> GetTableColumnsAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<ColumnInfo>> GetTableColumnsAsync(Connection connection, string tableName, CancellationToken cancellationToken = default, string? tableSchema = null)
         {
             var columns = new List<ColumnInfo>();
             
@@ -61,7 +78,7 @@ namespace DbView.Infrastructure.Services
             await conn.OpenAsync(cancellationToken);
             
             var command = conn.CreateCommand();
-            command.CommandText = GetColumnsQuery(connection.DbType, tableName, connection.DatabaseName);
+            command.CommandText = GetColumnsQuery(connection.DbType, tableName, connection.DatabaseName, tableSchema);
             
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -252,17 +269,63 @@ namespace DbView.Infrastructure.Services
             return primaryKeys;
         }
 
+        /// <summary>
+        /// PostgreSQL 的 schema 过滤条件。
+        /// 未指定 schema 时限定在当前 search_path（current_schemas(false)）内，
+        /// 避免跨 schema 的同名表被错配列结构。
+        /// </summary>
+        private static string PgSchemaFilter(string? tableSchema, string alias = "c")
+        {
+            if (string.IsNullOrWhiteSpace(tableSchema))
+            {
+                return $"AND {alias}.table_schema = ANY(current_schemas(false))";
+            }
+
+            return $"AND {alias}.table_schema = '{tableSchema.Replace("'", "''")}'";
+        }
+
+        /// <summary>
+        /// PostgreSQL 的 regclass 限定串（用于 col_description 等接受 regclass 的函数）。
+        /// </summary>
+        private static string PgRegClass(string tableName, string? tableSchema)
+        {
+            if (string.IsNullOrWhiteSpace(tableSchema))
+            {
+                return tableName;
+            }
+
+            return $"{tableSchema}.{tableName}";
+        }
+
         private string GetQuotedColumnName(string dbType, string columnName)
         {
+            // 转义内嵌的定界符，避免列名本身含引号时拼出非法 SQL
             return dbType.ToLower() switch
             {
-                "postgresql" => $"\"{columnName}\"",
-                "mysql" => $"`{columnName}`",
-                "sqlite" => $"\"{columnName}\"",
-                "sqlserver" => $"[{columnName}]",
-                "oracle" => $"\"{columnName}\"",
+                "postgresql" => $"\"{columnName.Replace("\"", "\"\"")}\"",
+                "mysql" => $"`{columnName.Replace("`", "``")}`",
+                "sqlite" => $"\"{columnName.Replace("\"", "\"\"")}\"",
+                "sqlserver" => $"[{columnName.Replace("]", "]]")}]",
+                "oracle" => $"\"{columnName.Replace("\"", "\"\"")}\"",
                 _ => columnName
             };
+        }
+
+        /// <summary>
+        /// 生成带 schema 限定的表名。PostgreSQL 多 schema 场景必须限定 schema：
+        /// 否则建表/读写会落到默认 search_path，既丢失表归属，也可能读写到别的 schema 的同名表。
+        /// 其余数据库的 schema 由连接/库决定，忽略即可。
+        /// </summary>
+        private string GetQualifiedTableName(string dbType, string tableName, string? schema)
+        {
+            if (dbType.ToLower() == "postgresql" && !string.IsNullOrWhiteSpace(schema))
+            {
+                var s = schema.Replace("\"", "\"\"");
+                var t = tableName.Replace("\"", "\"\"");
+                return $"\"{s}\".\"{t}\"";
+            }
+
+            return GetQuotedTableName(dbType, tableName);
         }
 
         private string GetPrimaryKeysQuery(string dbType, string tableName, string databaseName)
@@ -312,11 +375,11 @@ namespace DbView.Infrastructure.Services
         {
             return dbType.ToLower() switch
             {
-                "postgresql" => $"\"{tableName}\"",
-                "mysql" => $"`{tableName}`",
-                "sqlite" => $"\"{tableName}\"",
-                "sqlserver" => $"[{tableName}]",
-                "oracle" => $"\"{tableName}\"",
+                "postgresql" => $"\"{tableName.Replace("\"", "\"\"")}\"",
+                "mysql" => $"`{tableName.Replace("`", "``")}`",
+                "sqlite" => $"\"{tableName.Replace("\"", "\"\"")}\"",
+                "sqlserver" => $"[{tableName.Replace("]", "]]")}]",
+                "oracle" => $"\"{tableName.Replace("\"", "\"\"")}\"",
                 _ => tableName
             };
         }
@@ -342,45 +405,168 @@ namespace DbView.Infrastructure.Services
         }
 
         /// <summary>
-        /// 在单一数据库连接上顺序执行多条 SQL 语句。
+        /// 采集数据库对象（序列/函数/视图/索引/约束/触发器）的 DDL。
+        /// 备份时调用，把这些对象一并写入备份文件，保证恢复后的库"能跑且正确"
+        /// （尤其是 PostgreSQL 的向量索引 HNSW/IVFFlat，丢失会导致向量检索退化为全表扫描）。
+        /// </summary>
+        public async Task<BackupSchemaObjects> GetSchemaObjectsAsync(Connection connection, CancellationToken cancellationToken = default, BackupSession? session = null)
+        {
+            var owned = session == null;
+            var conn = session?.Db ?? CreateConnection(connection);
+            if (owned)
+            {
+                await conn.OpenAsync(cancellationToken);
+            }
+
+            try
+            {
+                return await SchemaObjectCollector.CollectAsync(conn, connection.DbType, cancellationToken);
+            }
+            finally
+            {
+                if (owned)
+                {
+                    await conn.DisposeAsync();
+                }
+            }
+        }
+
+        /// <summary>
+        /// 在单一数据库连接上顺序执行多条 SQL 语句（同步枚举版本）。
         /// 用于备份恢复：保证 SET FOREIGN_KEY_CHECKS / SET IDENTITY_INSERT 等连接级设置对整批生效，
         /// 并容忍 DROP TABLE（目标表不存在）失败而继续后续语句。
         /// </summary>
-        public async Task<(int Executed, int Skipped)> ExecuteBatchAsync(Connection connection, IEnumerable<string> statements, CancellationToken cancellationToken = default)
+        public Task<(int Executed, int Skipped)> ExecuteBatchAsync(Connection connection, IEnumerable<string> statements, CancellationToken cancellationToken = default)
+        {
+            return ExecuteBatchAsync(connection, ToAsyncEnumerable(statements), cancellationToken);
+        }
+
+        /// <summary>
+        /// 在单一数据库连接上顺序执行多条 SQL 语句（流式版本）。
+        ///
+        /// 生产级要点：
+        /// - 事务化：PostgreSQL / SQLite / SQL Server 下整批放在同一个事务里，任一条失败即整体回滚，
+        ///   绝不留下"表已重建、数据只插了一半"的半恢复状态。
+        ///   MySQL（DDL 隐式提交）与 Oracle（DDL 自动提交）无法整体回滚，保持逐条提交的原有行为。
+        /// - 保留 DROP 容错：目标表不存在时 DROP 失败可忽略。
+        /// </summary>
+        public async Task<(int Executed, int Skipped)> ExecuteBatchAsync(Connection connection, IAsyncEnumerable<string> statements, CancellationToken cancellationToken = default)
         {
             using var conn = CreateConnection(connection);
             await conn.OpenAsync(cancellationToken);
 
-            var executed = 0;
-            var skipped = 0;
-            foreach (var raw in statements)
-            {
-                var statement = raw.Trim();
-                if (string.IsNullOrWhiteSpace(statement))
-                {
-                    continue;
-                }
+            var dbType = connection.DbType.ToLower();
+            var supportsTransactionalDdl = dbType is "postgresql" or "sqlite" or "sqlserver";
 
+            DbTransaction? tx = null;
+            if (supportsTransactionalDdl)
+            {
                 try
                 {
-                    var command = conn.CreateCommand();
-                    command.CommandText = statement;
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                    executed++;
+                    tx = await conn.BeginTransactionAsync(cancellationToken);
                 }
-                catch (Exception) when (IsDropTableStatement(statement))
+                catch
                 {
-                    // 表不存在时 DROP 失败可忽略（如 Oracle 不支持 IF EXISTS）
-                    skipped++;
+                    // 某些驱动/场景不支持事务，降级为非事务执行
+                    tx = null;
+                }
+            }
+
+            var executed = 0;
+            var skipped = 0;
+
+            try
+            {
+                await foreach (var raw in statements.WithCancellation(cancellationToken))
+                {
+                    var statement = raw.Trim();
+                    if (statement.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var command = conn.CreateCommand();
+                        command.Transaction = tx;
+                        command.CommandText = statement;
+                        await command.ExecuteNonQueryAsync(cancellationToken);
+                        executed++;
+                    }
+                    catch (Exception) when (IsDropStatement(statement))
+                    {
+                        // DROP 失败可忽略：目标库中对象不存在、或该库不支持 IF EXISTS 语法
+                        skipped++;
+                    }
+                }
+
+                if (tx != null)
+                {
+                    await tx.CommitAsync(cancellationToken);
+                }
+            }
+            catch
+            {
+                if (tx != null)
+                {
+                    try
+                    {
+                        await tx.RollbackAsync(CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // 回滚失败时保留原始异常
+                    }
+                }
+                throw;
+            }
+            finally
+            {
+                if (tx != null)
+                {
+                    await tx.DisposeAsync();
                 }
             }
 
             return (executed, skipped);
         }
 
+        private static async IAsyncEnumerable<string> ToAsyncEnumerable(IEnumerable<string> items)
+        {
+            foreach (var item in items)
+            {
+                yield return item;
+            }
+        }
+
+        /// <summary>
+        /// 统计指定表的行数，用于恢复后与备份清单比对，验证"没有丢数据"。
+        /// 表不存在或查询失败时返回 null（不视为不一致，由调用方决定如何提示）。
+        /// </summary>
+        public async Task<long?> GetTableRowCountAsync(Connection connection, string tableName, string? tableSchema = null, CancellationToken cancellationToken = default)
+        {
+            using var conn = CreateConnection(connection);
+            await conn.OpenAsync(cancellationToken);
+
+            var command = conn.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {GetQualifiedTableName(connection.DbType, tableName, tableSchema)}";
+
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result == null || result == DBNull.Value ? null : Convert.ToInt64(result);
+        }
+
         private static bool IsDropTableStatement(string statement)
         {
             return statement.Length >= 10 && statement.Substring(0, 10).ToUpperInvariant().StartsWith("DROP TABLE");
+        }
+
+        /// <summary>
+        /// 是否是 DROP 语句。恢复时 DROP 失败（对象不存在、语法不被目标库支持）应可忽略，
+        /// 否则一条无用的 DROP 会让整批恢复中断。
+        /// </summary>
+        private static bool IsDropStatement(string statement)
+        {
+            return statement.Length >= 5 && statement.Substring(0, 5).ToUpperInvariant().StartsWith("DROP ");
         }
 
         private DbConnection CreateConnection(Connection connection)
@@ -395,6 +581,11 @@ namespace DbView.Infrastructure.Services
                 _ => throw new NotSupportedException($"Database type {connection.DbType} is not supported")
             };
         }
+
+        /// <summary>
+        /// 供备份等场景复用连接字符串与驱动映射创建连接（调用方负责 Open/Dispose）。
+        /// </summary>
+        public DbConnection CreateReadOnlyConnection(Connection connection) => CreateConnection(connection);
 
         private string GetConnectionString(Connection connection)
         {
@@ -463,19 +654,19 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        private string GetColumnsQuery(string dbType, string tableName, string databaseName)
+        private string GetColumnsQuery(string dbType, string tableName, string databaseName, string? tableSchema = null)
         {
             return dbType.ToLower() switch
             {
                 "postgresql" => $@"
                     SELECT 
                         c.column_name,
-                        c.data_type,
+                        CASE WHEN c.data_type IN ('USER-DEFINED', 'ARRAY') THEN c.udt_name ELSE c.data_type END as data_type,
                         CASE WHEN c.is_nullable = 'YES' THEN true ELSE false END as is_nullable,
                         CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key,
                         CASE WHEN c.column_default LIKE 'nextval%' THEN true ELSE false END as is_auto_increment,
                         c.column_default,
-                        col_description('{tableName}'::regclass, c.ordinal_position) as column_comment
+                        col_description('{PgRegClass(tableName, tableSchema)}'::regclass, c.ordinal_position) as column_comment
                     FROM information_schema.columns c
                     LEFT JOIN (
                         SELECT ku.column_name
@@ -484,8 +675,10 @@ namespace DbView.Infrastructure.Services
                             ON tc.constraint_name = ku.constraint_name
                         WHERE tc.constraint_type = 'PRIMARY KEY'
                         AND tc.table_name = '{tableName}'
+                        {PgSchemaFilter(tableSchema, "tc")}
                     ) pk ON c.column_name = pk.column_name
                     WHERE c.table_name = '{tableName}'
+                    {PgSchemaFilter(tableSchema, "c")}
                     ORDER BY c.ordinal_position",
                 "mysql" => $@"
                     SELECT 
@@ -557,15 +750,100 @@ namespace DbView.Infrastructure.Services
             };
         }
 
-        public async Task<List<string>> GetTableColumnNamesAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// 打开备份会话：单连接贯穿整个备份；PostgreSQL 下开启 REPEATABLE READ 事务，
+        /// 使所有表的数据来自同一个快照，避免备份内容跨表自相矛盾。
+        /// </summary>
+        public async Task<BackupSession> OpenBackupSessionAsync(Connection connection, CancellationToken cancellationToken = default)
+        {
+            var db = CreateConnection(connection);
+            await db.OpenAsync(cancellationToken);
+
+            DbTransaction? tx = null;
+            if (connection.DbType.ToLower() == "postgresql")
+            {
+                tx = await db.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+            }
+
+            return new BackupSession(db, tx);
+        }
+
+        /// <summary>
+        /// 取得 PG 某列 serial 默认值引用的序列名（如 app.items_id_seq）。
+        ///
+        /// 为什么不用 pg_get_serial_sequence：它依赖序列与列的 OWNED BY 依赖关系，
+        /// 而恢复时序列是独立 CREATE SEQUENCE、表只写了 DEFAULT nextval(...)，
+        /// 并没有建立 OWNED BY → 它返回 NULL → setval 被跳过 → 序列停在 1 → 后续插入主键冲突。
+        /// </summary>
+        public async Task<string?> GetPgSerialSequenceNameAsync(Connection connection, string tableName, string columnName, CancellationToken cancellationToken = default, string? tableSchema = null, BackupSession? session = null)
+        {
+            var owned = session == null;
+            var conn = session?.Db ?? CreateConnection(connection);
+            if (owned)
+            {
+                await conn.OpenAsync(cancellationToken);
+            }
+
+            DbCommand command = session?.CreateCommand() ?? conn.CreateCommand();
+            command.CommandText = $@"
+SELECT c.column_default
+FROM information_schema.columns c
+WHERE c.table_name = '{tableName.Replace("'", "''")}'
+  AND c.column_name = '{columnName.Replace("'", "''")}'
+  {PgSchemaFilter(tableSchema, "c")}
+LIMIT 1";
+
+            try
+            {
+                using (command)
+                {
+                    var value = await command.ExecuteScalarAsync(cancellationToken);
+                    var def = value == null || value == DBNull.Value ? null : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+                    if (string.IsNullOrWhiteSpace(def) || !def.StartsWith("nextval(", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return null;
+                    }
+
+                    // nextval('app.items_id_seq'::regclass) -> app.items_id_seq
+                    var first = def.IndexOf('\'');
+                    var last = def.LastIndexOf('\'');
+                    return first >= 0 && last > first ? def.Substring(first + 1, last - first - 1) : null;
+                }
+            }
+            finally
+            {
+                if (owned)
+                {
+                    await conn.DisposeAsync();
+                }
+            }
+        }
+
+        public async Task<List<string>> GetTableColumnNamesAsync(Connection connection, string tableName, CancellationToken cancellationToken = default, string? tableSchema = null, BackupSession? session = null)
         {
             var columns = new List<string>();
+
+            if (session != null)
+            {
+                var cmd2 = session.CreateCommand();
+                cmd2.CommandText = GetColumnsNameQuery(connection.DbType, tableName, connection.DatabaseName, tableSchema);
+                using (cmd2)
+                using (var reader2 = await cmd2.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader2.ReadAsync(cancellationToken))
+                    {
+                        columns.Add(reader2.GetString(0));
+                    }
+                }
+
+                return columns;
+            }
 
             using var conn = CreateConnection(connection);
             await conn.OpenAsync(cancellationToken);
 
             var command = conn.CreateCommand();
-            command.CommandText = GetColumnsNameQuery(connection.DbType, tableName, connection.DatabaseName);
+            command.CommandText = GetColumnsNameQuery(connection.DbType, tableName, connection.DatabaseName, tableSchema);
 
             using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -579,32 +857,50 @@ namespace DbView.Infrastructure.Services
         /// <summary>
         /// 流式读取整张表的数据，逐行 yield 返回，避免一次性把所有行加载进内存导致大表 OOM。
         /// 枚举期间会保持数据库连接与读取器打开，枚举结束（或提前 break / dispose）后自动释放。
+        /// 传入 session 时复用该连接/事务（保证与其它表读到同一快照）。
         /// </summary>
-        public async IAsyncEnumerable<object[]> StreamTableDataAsync(Connection connection, string tableName, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public async IAsyncEnumerable<object[]> StreamTableDataAsync(Connection connection, string tableName, [EnumeratorCancellation] CancellationToken cancellationToken = default, string? tableSchema = null, BackupSession? session = null)
         {
-            using var conn = CreateConnection(connection);
-            await conn.OpenAsync(cancellationToken);
+            var owned = session == null;
+            var conn = session?.Db ?? CreateConnection(connection);
+            if (owned)
+            {
+                await conn.OpenAsync(cancellationToken);
+            }
 
-            var quotedTableName = GetQuotedTableName(connection.DbType, tableName);
+            var quotedTableName = GetQualifiedTableName(connection.DbType, tableName, tableSchema);
 
-            var columnNames = await GetTableColumnNamesAsync(connection, tableName, cancellationToken);
+            var columnNames = await GetTableColumnNamesAsync(connection, tableName, cancellationToken, tableSchema, session);
             var quotedColumns = columnNames.Select(c => GetQuotedColumnName(connection.DbType, c));
             var selectColumns = connection.DbType.ToLower() == "postgresql"
                 ? string.Join(", ", quotedColumns.Select(c => $"CAST({c} AS TEXT)"))
                 : "*";
 
-            var command = conn.CreateCommand();
+            DbCommand command = session?.CreateCommand() ?? conn.CreateCommand();
             command.CommandText = $"SELECT {selectColumns} FROM {quotedTableName}";
 
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+            try
             {
-                var row = new object[reader.FieldCount];
-                for (int i = 0; i < reader.FieldCount; i++)
+                using (command)
+                using (var reader = await command.ExecuteReaderAsync(cancellationToken))
                 {
-                    row[i] = ReadCellValue(reader, i);
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        var row = new object[reader.FieldCount];
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            row[i] = ReadCellValue(reader, i);
+                        }
+                        yield return row;
+                    }
                 }
-                yield return row;
+            }
+            finally
+            {
+                if (owned)
+                {
+                    await conn.DisposeAsync();
+                }
             }
         }
 
@@ -615,12 +911,21 @@ namespace DbView.Infrastructure.Services
         /// </summary>
         private static object ReadCellValue(DbDataReader reader, int i)
         {
-            if (reader.IsDBNull(i))
-                return null!;
-
             try
             {
-                return reader.GetValue(i);
+                if (reader.IsDBNull(i))
+                    return null!;
+
+                var value = reader.GetValue(i);
+                // pgvector 的 vector 类型读取为 Pgvector.Vector，转成文本便于展示/序列化；
+                // 用类型全名判断避免直接依赖具体程序集。
+                if (value != null)
+                {
+                    var tn = value.GetType().FullName;
+                    if (tn != null && (tn.EndsWith("Vector") || tn.Contains("Pgvector")))
+                        return value.ToString()!;
+                }
+                return value;
             }
             catch
             {
@@ -630,20 +935,28 @@ namespace DbView.Infrastructure.Services
                 }
                 catch
                 {
-                    return reader[i]?.ToString();
+                    try
+                    {
+                        return reader[i]?.ToString();
+                    }
+                    catch
+                    {
+                        return "<无法读取该列>";
+                    }
                 }
             }
         }
 
-        private string GetColumnsNameQuery(string dbType, string tableName, string databaseName)
+        private string GetColumnsNameQuery(string dbType, string tableName, string databaseName, string? tableSchema = null)
         {
             return dbType.ToLower() switch
             {
                 "postgresql" => $@"
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = '{tableName}'
-            ORDER BY ordinal_position",
+            SELECT c.column_name
+            FROM information_schema.columns c
+            WHERE c.table_name = '{tableName}'
+            {PgSchemaFilter(tableSchema, "c")}
+            ORDER BY c.ordinal_position",
                 "mysql" => $@"
             SELECT COLUMN_NAME 
             FROM information_schema.COLUMNS 
@@ -697,82 +1010,142 @@ namespace DbView.Infrastructure.Services
 
         // ============ 备份用：生成建表语句（保留完整类型/主键/自增/默认值） ============
 
-        public async Task<(string Sql, List<string> AutoIncrementColumns)> GenerateCreateTableSqlAsync(Connection connection, string tableName, CancellationToken cancellationToken = default)
+        public async Task<(string Sql, List<string> AutoIncrementColumns)> GenerateCreateTableSqlAsync(Connection connection, string tableName, CancellationToken cancellationToken = default, string? tableSchema = null, BackupSession? session = null)
         {
             var dbType = connection.DbType.ToLower();
-            var quotedTableName = GetQuotedTableName(connection.DbType, tableName);
+            var quotedTableName = GetQualifiedTableName(connection.DbType, tableName, tableSchema);
 
-            using var conn = CreateConnection(connection);
-            await conn.OpenAsync(cancellationToken);
-
-            var command = conn.CreateCommand();
-            command.CommandText = GetFullColumnsQuery(dbType, tableName, connection.DatabaseName);
-
-            var columnDefs = new List<string>();
-            var pkColumns = new List<string>();
-            var autoColumns = new List<string>();
-
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
+            var owned = session == null;
+            var conn = session?.Db ?? CreateConnection(connection);
+            if (owned)
             {
-                var colName = reader.GetString(0);
-                var colType = reader.GetString(1);
-                var isNullable = ReadBool(reader, 2);
-                var isPrimaryKey = ReadBool(reader, 3);
-                var isAutoIncrement = ReadBool(reader, 4);
-                var defaultValue = reader.IsDBNull(5) ? null : reader.GetString(5);
-
-                var qc = GetQuotedColumnName(connection.DbType, colName);
-                var parts = new List<string> { $"{qc} {colType}" };
-                if (!isNullable)
-                {
-                    parts.Add("NOT NULL");
-                }
-
-                // 自动增长关键字仅 MySQL/SQLServer 需要；PG 靠 DEFAULT nextval、SQLite 靠 INTEGER PRIMARY KEY、Oracle 靠序列/默认值实现
-                var autoKeyword = dbType switch
-                {
-                    "mysql" => isAutoIncrement ? "AUTO_INCREMENT" : null,
-                    "sqlserver" => isAutoIncrement ? "IDENTITY(1,1)" : null,
-                    _ => null
-                };
-                if (autoKeyword != null)
-                {
-                    parts.Add(autoKeyword);
-                }
-                if (isAutoIncrement)
-                {
-                    autoColumns.Add(colName);
-                }
-
-                if (!string.IsNullOrWhiteSpace(defaultValue))
-                {
-                    parts.Add($"DEFAULT {FormatDefaultValue(defaultValue, dbType)}");
-                }
-                columnDefs.Add(string.Join(" ", parts));
-                if (isPrimaryKey)
-                {
-                    pkColumns.Add(qc);
-                }
+                await conn.OpenAsync(cancellationToken);
             }
 
-            if (columnDefs.Count == 0)
+            try
             {
-                throw new InvalidOperationException($"无法获取表 {tableName} 的列信息，可能该表不存在或无权访问");
-            }
+                // SQLite：直接使用 sqlite_master 里保存的原始建表语句。
+                // 用 pragma 重建会丢掉 UNIQUE / CHECK / NOT NULL / DEFAULT / AUTOINCREMENT 等约束，
+                // 导致恢复后的库"结构看着对、约束全没了"。
+                if (dbType == "sqlite")
+                {
+                    var rawSql = await GetSqliteOriginalCreateTableSqlAsync(conn, session, tableName, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(rawSql))
+                    {
+                        // SQLite 的自增列无需 setval 复位（INTEGER PRIMARY KEY 即 rowid 别名），
+                        // 因此不返回自增列信息。
+                        return (rawSql.Trim() + ";", new List<string>());
+                    }
+                }
 
-            if (pkColumns.Count > 0)
+                var command = session?.CreateCommand() ?? conn.CreateCommand();
+                command.CommandText = GetFullColumnsQuery(dbType, tableName, connection.DatabaseName, tableSchema);
+
+                var columnDefs = new List<string>();
+                var pkColumns = new List<string>();
+                var autoColumns = new List<string>();
+
+                using (command)
+                using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        var colName = reader.GetString(0);
+                        var colType = reader.GetString(1);
+                        var isNullable = ReadBool(reader, 2);
+                        var isPrimaryKey = ReadBool(reader, 3);
+                        var isAutoIncrement = ReadBool(reader, 4);
+                        var defaultValue = reader.IsDBNull(5) ? null : reader.GetString(5);
+
+                        var qc = GetQuotedColumnName(connection.DbType, colName);
+                        var parts = new List<string> { $"{qc} {colType}" };
+                        if (!isNullable)
+                        {
+                            parts.Add("NOT NULL");
+                        }
+
+                        // 自动增长关键字仅 MySQL/SQLServer 需要；PG 靠 DEFAULT nextval、SQLite 靠 INTEGER PRIMARY KEY、Oracle 靠序列/默认值实现
+                        var autoKeyword = dbType switch
+                        {
+                            "mysql" => isAutoIncrement ? "AUTO_INCREMENT" : null,
+                            "sqlserver" => isAutoIncrement ? "IDENTITY(1,1)" : null,
+                            _ => null
+                        };
+                        if (autoKeyword != null)
+                        {
+                            parts.Add(autoKeyword);
+                        }
+
+                        // PG 的 identity 列：类型文本里已带上 GENERATED BY DEFAULT AS IDENTITY，
+                        // 也必须计入 autoColumns —— 否则恢复后内部序列不前进，新插入会主键冲突。
+                        var isPgIdentity = colType.Contains("IDENTITY", StringComparison.OrdinalIgnoreCase);
+
+                        if (isAutoIncrement || isPgIdentity)
+                        {
+                            autoColumns.Add(colName);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(defaultValue))
+                        {
+                            parts.Add($"DEFAULT {FormatDefaultValue(defaultValue, dbType)}");
+                        }
+                        columnDefs.Add(string.Join(" ", parts));
+                        if (isPrimaryKey)
+                        {
+                            pkColumns.Add(qc);
+                        }
+                    }
+                }
+
+                if (columnDefs.Count == 0)
+                {
+                    throw new InvalidOperationException($"无法获取表 {tableName} 的列信息，可能该表不存在或无权访问");
+                }
+
+                if (pkColumns.Count > 0)
+                {
+                    columnDefs.Add($"PRIMARY KEY ({string.Join(", ", pkColumns)})");
+                }
+
+                var sql = $"CREATE TABLE {quotedTableName} (\n  {string.Join(",\n  ", columnDefs)}\n);";
+                return (sql, autoColumns);
+            }
+            finally
             {
-                columnDefs.Add($"PRIMARY KEY ({string.Join(", ", pkColumns)})");
+                if (owned)
+                {
+                    await conn.DisposeAsync();
+                }
             }
-
-            var sql = $"CREATE TABLE {quotedTableName} (\n  {string.Join(",\n  ", columnDefs)}\n);";
-            return (sql, autoColumns);
         }
 
-        private string GetFullColumnsQuery(string dbType, string tableName, string databaseName)
+        /// <summary>
+        /// 读取 SQLite 原始建表语句（sqlite_master.sql），保留 UNIQUE/CHECK/NOT NULL/DEFAULT 等约束。
+        /// 找不到时返回 null，由调用方回退到 pragma 重建。
+        /// </summary>
+        private async Task<string?> GetSqliteOriginalCreateTableSqlAsync(DbConnection conn, BackupSession? session, string tableName, CancellationToken cancellationToken)
         {
-            return dbType switch
+            try
+            {
+                var command = session?.CreateCommand() ?? conn.CreateCommand();
+                command.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = @t";
+                var p = command.CreateParameter();
+                p.ParameterName = "@t";
+                p.Value = tableName;
+                command.Parameters.Add(p);
+
+                var result = await command.ExecuteScalarAsync(cancellationToken);
+                return result == null || result == DBNull.Value ? null : result.ToString();
+            }
+            catch
+            {
+                // 读取失败时回退到 pragma 重建
+                return null;
+            }
+        }
+
+        private string GetFullColumnsQuery(string dbType, string tableName, string databaseName, string? tableSchema = null)
+        {            return dbType switch
             {
                 "mysql" => $@"
                     SELECT COLUMN_NAME, COLUMN_TYPE,
@@ -794,12 +1167,26 @@ namespace DbView.Infrastructure.Services
                     ORDER BY cid",
                 "postgresql" => $@"
                     SELECT c.column_name,
-                           c.data_type || COALESCE('(' || NULLIF(c.character_maximum_length, 0)::text || ')', ''),
+                           CASE WHEN c.is_identity = 'YES'
+                                THEN ft.full_type || ' GENERATED BY DEFAULT AS IDENTITY'
+                                ELSE ft.full_type
+                           END,
                            CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END,
                            CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END,
                            CASE WHEN c.column_default LIKE 'nextval%' THEN 1 ELSE 0 END,
                            c.column_default
                     FROM information_schema.columns c
+                    -- format_type 能保留类型修饰符：vector(3)、numeric(10,2)、text[]、
+                    -- 以及 ENUM/域类型的 schema 限定名，information_schema 的 data_type 全都做不到。
+                    LEFT JOIN LATERAL (
+                        SELECT COALESCE(
+                            (SELECT format_type(a.atttypid, a.atttypmod)
+                             FROM pg_attribute a
+                             WHERE a.attrelid = format('%I.%I', c.table_schema, c.table_name)::regclass
+                               AND a.attname = c.column_name
+                               AND a.attnum > 0 AND NOT a.attisdropped),
+                            c.udt_name) AS full_type
+                    ) ft ON true
                     LEFT JOIN (
                         SELECT ku.column_name
                         FROM information_schema.table_constraints tc
@@ -807,8 +1194,10 @@ namespace DbView.Infrastructure.Services
                             ON tc.constraint_name = ku.constraint_name
                         WHERE tc.constraint_type = 'PRIMARY KEY'
                         AND tc.table_name = '{tableName}'
+                        {PgSchemaFilter(tableSchema, "tc")}
                     ) pk ON c.column_name = pk.column_name
                     WHERE c.table_name = '{tableName}'
+                    {PgSchemaFilter(tableSchema, "c")}
                     ORDER BY c.ordinal_position",
                 "sqlserver" => $@"
                     SELECT c.COLUMN_NAME,

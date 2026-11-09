@@ -68,11 +68,20 @@ namespace DbView.WebApi.Features.Sql.Execute
                             {
                                 try
                                 {
-                                    row[i] = reader.GetValue(i);
+                                    var val = reader.GetValue(i);
+                                    // pgvector 的 vector 类型读取为 Pgvector.Vector，转成文本便于展示/序列化
+                                    if (val != null)
+                                    {
+                                        var tn = val.GetType().FullName;
+                                        if (tn != null && (tn.EndsWith("Vector") || tn.Contains("Pgvector")))
+                                            val = val.ToString();
+                                    }
+                                    row[i] = val;
                                 }
                                 catch
                                 {
-                                    row[i] = reader.GetFieldValue<string>(i);
+                                    try { row[i] = reader.GetFieldValue<string>(i); }
+                                    catch { try { row[i] = reader[i]?.ToString(); } catch { row[i] = "<无法读取该列>"; } }
                                 }
                             }
                         }

@@ -43,12 +43,15 @@ namespace DbView.WebApi.Features.Backup
                     Message = "备份成功",
                     Backup = new BackupDto
                     {
-                        Id = DateTime.Now.Ticks,
+                        Id = result.Id,
                         Name = backupName,
                         ConnectionId = connection.Id,
                         FileName = result.FileName,
                         FileSize = result.FileSize,
-                        CreatedAt = result.CreatedAt
+                        CreatedAt = result.CreatedAt,
+                        Compressed = result.Compressed,
+                        Encrypted = result.Encrypted,
+                        Trigger = backupName.StartsWith("pre_restore_", StringComparison.Ordinal) ? "pre_restore" : "manual"
                     }
                 };
 

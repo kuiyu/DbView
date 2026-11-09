@@ -11,6 +11,18 @@ namespace DbView.Core.Abstractions
         public string FilePath { get; set; } = string.Empty;
         public long FileSize { get; set; }
         public DateTime CreatedAt { get; set; }
+
+        /// <summary>稳定的备份 Id（与元数据旁车文件中记录的一致）</summary>
+        public long Id { get; set; }
+
+        /// <summary>备份文件内容的 SHA256，用于恢复前完整性校验</summary>
+        public string Sha256 { get; set; } = string.Empty;
+
+        /// <summary>负载是否经过 gzip 压缩</summary>
+        public bool Compressed { get; set; }
+
+        /// <summary>负载是否经过 AES-256-GCM 加密</summary>
+        public bool Encrypted { get; set; }
     }
 
     /// <summary>

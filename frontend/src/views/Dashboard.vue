@@ -52,6 +52,7 @@
               <div v-if="currentConnection?.id === connection.id" class="backup-config-section">
                 <div class="backup-config-header">
                   <span class="backup-config-title">自动备份</span>
+                  <t-button size="small" variant="text" @click="onOpenBackupManager">管理备份</t-button>
                   <t-switch v-model="backupConfig.enabled" @change="onBackupConfigChange" />
                 </div>
                 <div v-if="backupConfig.enabled" class="backup-config-body">
@@ -78,10 +79,20 @@
                       <template #suffix>天</template>
                     </t-input-number>
                   </div>
-                  <div class="config-tip">仅保留最近 {{ backupConfig.retentionDays }} 天的自动备份，更早的自动备份会被自动删除（手动备份不受影响）</div>
+                  <div class="config-tip">仅保留最近 {{ backupConfig.retentionDays }} 天的自动备份；手动备份最多保留 20 个，更早的会被自动删除</div>
                   <div v-if="backupConfig.lastBackupTime" class="config-row">
                     <span class="config-label">上次备份</span>
                     <span class="config-value">{{ formatTime(backupConfig.lastBackupTime) }}</span>
+                  </div>
+                  <t-alert
+                    v-if="backupConfig.lastError"
+                    theme="error"
+                    class="backup-error"
+                    :message="`最近一次自动备份失败：${backupConfig.lastError}`"
+                  />
+                  <div v-if="backupConfig.consecutiveFailures > 0" class="config-row">
+                    <span class="config-label">连续失败</span>
+                    <span class="config-value">{{ backupConfig.consecutiveFailures }} 次（将自动退避重试）</span>
                   </div>
                 </div>
               </div>
@@ -105,6 +116,7 @@
           v-if="activeTab === 'data'"
           :connection-id="currentConnection.id"
           :table-name="currentTable"
+          :table-schema="currentTableSchema"
         />
         <div v-else-if="activeTab === 'sql'" class="sql-panel">
           <div class="sql-editor-slot">
@@ -160,11 +172,16 @@
   </main-layout>
 
   <connection-dialog ref="connectionDialog" @save="onConnectionSave" />
+  <backup-manager-dialog
+    ref="backupManagerDialog"
+    :connection-id="currentConnection?.id || 0"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import BackupManagerDialog from '../components/backup/BackupManagerDialog.vue'
 import { AddIcon, RefreshIcon, SearchIcon } from 'tdesign-icons-vue-next'
 import MainLayout from '../layouts/MainLayout.vue'
 import ConnectionDialog from '../components/connection/ConnectionDialog.vue'
@@ -181,14 +198,28 @@ interface Table {
 }
 
 const connectionDialog = ref()
+const backupManagerDialog = ref<InstanceType<typeof BackupManagerDialog>>()
+
+const onOpenBackupManager = () => {
+  if (!currentConnection.value?.id) {
+    MessagePlugin.warning('请先选择数据库连接')
+    return
+  }
+  backupManagerDialog.value?.open()
+}
 const connections = ref<any[]>([])
 const currentConnection = ref<any>(null)
 const currentTable = ref<string>('')
+/** 当前选中表所在的 schema（PostgreSQL 多 schema 场景用于精确定位同名表） */
+const currentTableSchema = computed(() => {
+  const hit = tables.value.find(t => t.tableName === currentTable.value)
+  return hit?.schemaName || ''
+})
 const tables = ref<Table[]>([])
 const searchKeyword = ref('')
 const loadingTables = ref(false)
 const expandedConnections = ref<number[]>([])
-const backupConfig = ref({ enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null as string | null, lastBackupTime: null as string | null })
+const backupConfig = ref({ enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null as string | null, lastBackupTime: null as string | null, lastError: null as string | null, consecutiveFailures: 0 })
 const activeTab = ref<'data' | 'sql'>('data')
 const sqlResult = ref<any>(null)
 // 用户在各表中输入的 SQL 文本，按表名缓存，切换 Tab 不会重置
@@ -286,12 +317,14 @@ const loadBackupConfig = async () => {
       enabled: config.enabled || false,
       intervalHours: config.intervalHours || 24,
       retentionDays: config.retentionDays || 7,
+      lastError: config.lastError || null,
+      consecutiveFailures: config.consecutiveFailures || 0,
       scheduleMode: config.scheduleMode || 'interval',
       backupTime: config.backupTime || null,
       lastBackupTime: config.lastBackupTime || null
     }
   } catch (error) {
-    backupConfig.value = { enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null, lastBackupTime: null }
+    backupConfig.value = { enabled: false, intervalHours: 24, retentionDays: 7, scheduleMode: 'interval', backupTime: null, lastBackupTime: null, lastError: null, consecutiveFailures: 0 }
   }
 }
 

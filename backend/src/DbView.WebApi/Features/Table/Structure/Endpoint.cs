@@ -30,7 +30,7 @@ namespace DbView.WebApi.Features.Table.Structure
                 return;
             }
 
-            var columns = await _databaseService.GetTableColumnsAsync(connection, r.TableName, c);
+            var columns = await _databaseService.GetTableColumnsAsync(connection, r.TableName, c, r.Schema);
 
             var response = columns.Select(col => new ColumnDto
             {
